@@ -31,9 +31,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 public class MainActivity extends Activity {
     static final int DISCOVERY_PORT=45454, AUDIO_PORT=45455, SAMPLE_RATE=16000, CHUNK=640;
+    // Offline mode supports 10 phones total: 1 host + up to 9 connected clients.
+    static final int MAX_CLIENTS=9;
     static final int REQ_PERMS=77;
     TextView status, role, wifiLabel, btLabel;
-    Button hostBtn, rescanBtn, talkBtn, stopBtn, nameBtn;
+    Button hostBtn, rescanBtn, talkBtn, stopBtn, nameBtn, onlineBtn;
     EditText nameInput;
     LinearLayout wifiList, btList;
     volatile boolean hosting=false, connected=false, talking=false, running=true, connecting=false;
@@ -112,12 +114,13 @@ public class MainActivity extends Activity {
         ScrollView scroll=new ScrollView(this);
         LinearLayout root=new LinearLayout(this);root.setOrientation(1);root.setPadding(22,20,22,24);root.setGravity(Gravity.CENTER_HORIZONTAL);root.setBackgroundColor(Color.rgb(16,24,39));
         TextView title=new TextView(this);title.setText("Yubaraj Walkie-Talkie");title.setTextColor(Color.WHITE);title.setTextSize(24);title.setGravity(Gravity.CENTER);title.setPadding(0,8,0,4);root.addView(title,new LinearLayout.LayoutParams(-1,-2));
-        TextView sub=new TextView(this);sub.setText("Auto Find • Wi-Fi / Hotspot + Bluetooth scan");sub.setTextColor(Color.LTGRAY);sub.setGravity(Gravity.CENTER);sub.setPadding(0,0,0,16);root.addView(sub);
+        TextView sub=new TextView(this);sub.setText("OFFLINE: Wi-Fi / Hotspot • ONLINE: LiveKit Internet");sub.setTextColor(Color.LTGRAY);sub.setGravity(Gravity.CENTER);sub.setPadding(0,0,0,16);root.addView(sub);
         nameInput=new EditText(this);nameInput.setSingleLine(true);nameInput.setText(deviceName);nameInput.setHint("Your display name");nameInput.setTextColor(Color.WHITE);nameInput.setHintTextColor(Color.LTGRAY);nameInput.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(117,209,255)));root.addView(nameInput,params());
         nameBtn=button("SAVE MY NAME");root.addView(nameBtn,params());
         role=new TextView(this);role.setText("Searching automatically…");role.setTextColor(Color.rgb(117,209,255));role.setTextSize(16);role.setGravity(Gravity.CENTER);root.addView(role,params());
-        hostBtn=button("START HOST");rescanBtn=button("SEARCH AGAIN");talkBtn=button("HOLD TO TALK");stopBtn=button("DISCONNECT");
-        root.addView(hostBtn,params());root.addView(rescanBtn,params());
+        hostBtn=button("START OFFLINE HOST");rescanBtn=button("SEARCH OFFLINE DEVICES");onlineBtn=button("🌐 ONLINE MODE (INTERNET)");talkBtn=button("HOLD TO TALK");stopBtn=button("DISCONNECT");
+        root.addView(hostBtn,params());root.addView(rescanBtn,params());root.addView(onlineBtn,params());
+        onlineBtn.setOnClickListener(v -> startActivity(new Intent(MainActivity.this, OnlineActivity.class)));
         wifiLabel=section("Wi-Fi / Hotspot devices");root.addView(wifiLabel);
         wifiList=new LinearLayout(this);wifiList.setOrientation(1);root.addView(wifiList,new LinearLayout.LayoutParams(-1,-2));
         btLabel=section("Nearby Bluetooth devices (discovery only)");root.addView(btLabel);
@@ -131,7 +134,7 @@ public class MainActivity extends Activity {
         });
         LinearLayout.LayoutParams tp=new LinearLayout.LayoutParams(240,240);tp.gravity=Gravity.CENTER;tp.setMargins(0,12,0,12);root.addView(talkBtn,tp);
         root.addView(stopBtn,params());
-        status=new TextView(this);status.setText("Auto search started. For voice, phones must share the same Wi-Fi/Hotspot.");status.setTextColor(Color.WHITE);status.setTextSize(14);status.setGravity(Gravity.CENTER);status.setPadding(0,14,0,0);root.addView(status,new LinearLayout.LayoutParams(-1,-2));
+        status=new TextView(this);status.setText("Offline mode stays available. Tap ONLINE MODE to talk over the internet.");status.setTextColor(Color.WHITE);status.setTextSize(14);status.setGravity(Gravity.CENTER);status.setPadding(0,14,0,0);root.addView(status,new LinearLayout.LayoutParams(-1,-2));
         scroll.addView(root);setContentView(scroll);
         hostBtn.setOnClickListener(v->startHost());
         rescanBtn.setOnClickListener(v->{renderLists();startBluetoothScan();setStatus("Searching again…");});
@@ -198,7 +201,19 @@ public class MainActivity extends Activity {
             try{
                 serverSocket=new ServerSocket();serverSocket.setReuseAddress(true);serverSocket.bind(new InetSocketAddress(AUDIO_PORT));
                 setStatus("Host running as "+deviceName+". Other phones on the same hotspot will auto-connect.");
-                while(hosting){Socket s=serverSocket.accept();s.setTcpNoDelay(true);Client c=new Client(s);clients.add(c);setStatus("Connected devices: "+clients.size());new Thread(()->readClient(c)).start();}
+                while(hosting){
+                    Socket s=serverSocket.accept();
+                    s.setTcpNoDelay(true);
+                    if(clients.size()>=MAX_CLIENTS){
+                        try{s.close();}catch(IOException ignored){}
+                        setStatus("Offline limit reached: 10 phones total (including host). Disconnect a phone to allow another.");
+                        continue;
+                    }
+                    Client c=new Client(s);
+                    clients.add(c);
+                    setStatus("Offline connected: "+(clients.size()+1)+"/10 phones (host included)");
+                    new Thread(()->readClient(c)).start();
+                }
             }catch(Exception e){if(hosting)setStatus("Host error: "+e.getMessage());}
         },"host-server").start();
         new Thread(this::sendBeacon,"host-beacon").start();
@@ -338,7 +353,7 @@ public class MainActivity extends Activity {
                 int type=in.readUnsignedByte();int len=in.readInt();if(len<0||len>8192)break;byte[] data=new byte[len];in.readFully(data);
                 if(type==1){play(data);for(Client other:clients)if(other!=c)other.send(type,data);}
             }
-        }catch(Exception ignored){}finally{clients.remove(c);try{c.socket.close();}catch(Exception ignored){}if(hosting)setStatus("A device disconnected. Remaining: "+clients.size());}
+        }catch(Exception ignored){}finally{clients.remove(c);try{c.socket.close();}catch(Exception ignored){}if(hosting)setStatus("Offline connected: "+(clients.size()+1)+"/10 phones (host included)");}
     }
     void readServer(Socket s){
         try(DataInputStream in=new DataInputStream(new BufferedInputStream(s.getInputStream()))){
