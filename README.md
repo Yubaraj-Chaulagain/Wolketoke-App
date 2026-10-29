@@ -1,19 +1,18 @@
-# Yubaraj Walkie-Talkie — Android offline prototype
+# Yubaraj Walkie-Talkie — Auto Find test build
 
-This project implements a first-pass Android-to-Android local voice prototype using TCP audio and UDP host discovery.
+## What this version does
+- Starts searching automatically when the app opens.
+- Shows detected Yubaraj app hosts by phone/device name and IP.
+- Automatically connects to the first Wi-Fi/Hotspot host it detects.
+- Lets the user choose a detected Wi-Fi host from the list.
+- Scans nearby Bluetooth devices and lists their names as a separate list.
+- Keeps push-to-talk voice transport over the same Wi-Fi/Hotspot network.
 
-## How to try
-1. Upload the project to a GitHub repository on branch `main`.
-2. Open Actions → `Build Yubaraj Walkie-Talkie APK` → Run workflow.
-3. Download the `Yubaraj-Walkie-Talkie-APK` artifact and extract the APK.
-4. Install on two Android phones and allow microphone access.
-5. Enable one phone's Wi-Fi hotspot. Connect the second phone to that hotspot.
-6. On the host phone, tap `START HOST`. On the second phone, tap `FIND HOST`; if host is found, tap `FIND HOST` again to connect.
-7. Hold `HOLD TO TALK` while speaking.
+## Important limitations
+- Bluetooth scanning in this test build is for discovery/list display only; voice is not yet transported over Bluetooth.
+- Android normally requires the user to enable/connect to a hotspot and approve Bluetooth permissions. A regular APK cannot silently turn on every phone's hotspot or silently join every network.
+- All phones that should exchange voice must be on the same Wi-Fi/hotspot and one phone must be hosting.
+- This is a test build, not a verified production release. Test on two Android phones first.
 
-## Limitations
-- Prototype only; it has not been built or tested on physical devices in this environment.
-- Android hotspot broadcast/discovery differs across phone brands. If automatic discovery fails, the local network/discovery implementation needs device-specific troubleshooting.
-- This prototype is Android-to-Android only. iPhone support needs a separate iOS app or a secure web client and is not included here.
-- Audio is raw PCM over a local TCP connection, with no encryption, no echo cancellation and no packet jitter buffer. Use only on a trusted local network; do not treat as a secure communications product.
-- Keep phones on the same Wi-Fi/hotspot and within range. 50–100 m is not guaranteed.
+## Build APK
+Push the project to GitHub, then use Actions > Build Yubaraj Walkie-Talkie APK. Download the `Yubaraj-Walkie-Talkie-APK` artifact.
