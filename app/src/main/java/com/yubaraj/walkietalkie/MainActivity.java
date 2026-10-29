@@ -11,6 +11,8 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.net.wifi.WifiManager;
+import android.net.wifi.WifiInfo;
+import android.net.DhcpInfo;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.Gravity;
@@ -151,14 +153,42 @@ public class MainActivity extends Activity {
                 if(!hosting&&!connected&&!connecting&&!hostAddress.isEmpty()){
                     String ip=hostAddress;hostAddress="";connectTo(ip);
                 }
-                // If no host is found after a short search, this phone becomes the first host.
-                if(!hosting&&!connected&&!connecting&&System.currentTimeMillis()-began>8000&&peers.isEmpty()){
+                // Hotspot APs often block UDP broadcast. On a client connected to a phone hotspot,
+                // Android's DHCP gateway is normally the hotspot phone. Probe its audio port as fallback.
+                if(!hosting&&!connected&&!connecting&&System.currentTimeMillis()-began>1500){
+                    String gateway=getGatewayIp();
+                    if(!gateway.isEmpty()&&!gateway.equals(getLocalIp())&&isHostPortOpen(gateway)){
+                        synchronized(peers){peers.put(gateway,new Peer(gateway,"Walkie-Talkie Host", "HOST"));}
+                        hostAddress=gateway;
+                        renderLists();
+                    }
+                }
+                // Only self-elect if neither UDP discovery nor hotspot-gateway probing finds a host.
+                if(!hosting&&!connected&&!connecting&&System.currentTimeMillis()-began>10000&&peers.isEmpty()){
                     startHost(); began=System.currentTimeMillis();
                 }
-                try{Thread.sleep(800);}catch(Exception ignored){}
+                try{Thread.sleep(1200);}catch(Exception ignored){}
             }
         },"auto-connect-host-election").start();
     }
+
+    String getGatewayIp(){
+        try{
+            WifiManager wm=(WifiManager)getApplicationContext().getSystemService(WIFI_SERVICE);
+            if(wm==null)return "";
+            DhcpInfo dhcp=wm.getDhcpInfo();
+            if(dhcp==null||dhcp.gateway==0)return "";
+            int g=dhcp.gateway;
+            return (g&0xff)+"."+((g>>8)&0xff)+"."+((g>>16)&0xff)+"."+((g>>24)&0xff);
+        }catch(Exception e){return "";}
+    }
+    boolean isHostPortOpen(String ip){
+        try(Socket probe=new Socket()){
+            probe.connect(new InetSocketAddress(ip,AUDIO_PORT),350);
+            return true;
+        }catch(Exception e){return false;}
+    }
+
     void startHost(){
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){requestNeededPermissions();setStatus("Allow microphone permission, then tap START HOST.");return;}
         if(hosting)return;
