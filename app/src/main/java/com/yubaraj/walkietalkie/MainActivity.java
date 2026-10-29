@@ -49,6 +49,29 @@ public class MainActivity extends Activity {
     BluetoothAdapter btAdapter;
     BroadcastReceiver btReceiver;
 
+
+    static class Client {
+        final Socket socket;
+        final DataOutputStream out;
+        final Object lock = new Object();
+        Client(Socket s) throws IOException {
+            socket = s;
+            out = new DataOutputStream(new BufferedOutputStream(s.getOutputStream()));
+        }
+        void send(int type, byte[] data) {
+            try {
+                synchronized (lock) {
+                    out.writeByte(type);
+                    out.writeInt(data.length);
+                    out.write(data);
+                    out.flush();
+                }
+            } catch (IOException ignored) {
+                try { socket.close(); } catch (IOException ignored2) {}
+            }
+        }
+    }
+
     static class Peer {
         String ip, name, mode;
         long seen;
@@ -255,7 +278,7 @@ public class MainActivity extends Activity {
                         BluetoothDevice d=i.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
                         if(d!=null){String name="Bluetooth device";try{if(Build.VERSION.SDK_INT<31||checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)==PackageManager.PERMISSION_GRANTED){if(d.getName()!=null)name=d.getName();}}catch(Exception ignored){}
                             String key=d.getAddress();bluetoothPeers.put(key,name);renderLists();}
-                    } else if(BluetoothAdapter.ACTION_DISCOVERY_FINISHED){setStatus("Search complete. Choose a Wi-Fi host to talk; Bluetooth list is discovery only.");}
+                    } else if(BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(action)){setStatus("Search complete. Choose a Wi-Fi host to talk; Bluetooth list is discovery only.");}
                 }};
                 IntentFilter f=new IntentFilter();f.addAction(BluetoothDevice.ACTION_FOUND);f.addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED);registerReceiver(btReceiver,f);
             }
