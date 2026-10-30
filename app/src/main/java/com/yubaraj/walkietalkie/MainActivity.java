@@ -84,8 +84,34 @@ public class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
-        getWindow().setStatusBarColor(Color.rgb(16,24,39));
-        getWindow().setNavigationBarColor(Color.rgb(16,24,39));
+        getWindow().setStatusBarColor(Color.rgb(5,18,35));
+        getWindow().setNavigationBarColor(Color.rgb(5,18,35));
+        showLogoSplash();
+        new android.os.Handler(getMainLooper()).postDelayed(() -> initializeWalkieTalkie(), 1500);
+    }
+
+    void showLogoSplash(){
+        LinearLayout splash=new LinearLayout(this);
+        splash.setOrientation(LinearLayout.VERTICAL);
+        splash.setGravity(Gravity.CENTER);
+        splash.setPadding(24,24,24,24);
+        splash.setBackgroundColor(Color.rgb(5,18,35));
+        ImageView logo=new ImageView(this);
+        logo.setImageResource(com.yubaraj.walkietalkie.R.drawable.wolketoke_logo);
+        logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        splash.addView(logo,new LinearLayout.LayoutParams(-1,0,1f));
+        TextView caption=new TextView(this);
+        caption.setText("WOLKETOKE WALKIE-TALKIE");
+        caption.setTextColor(Color.WHITE);
+        caption.setTextSize(20);
+        caption.setTypeface(null, android.graphics.Typeface.BOLD);
+        caption.setGravity(Gravity.CENTER);
+        caption.setPadding(0,12,0,12);
+        splash.addView(caption,new LinearLayout.LayoutParams(-1,-2));
+        setContentView(splash);
+    }
+
+    void initializeWalkieTalkie(){
         deviceName=getPreferences(0).getString("deviceName", android.os.Build.MODEL==null?"Walkie Phone":android.os.Build.MODEL);
         WifiManager wm=(WifiManager)getApplicationContext().getSystemService(WIFI_SERVICE);
         if(wm!=null){try{multicastLock=wm.createMulticastLock("yubaraj-walkie");multicastLock.setReferenceCounted(false);multicastLock.acquire();}catch(Exception ignored){}}
