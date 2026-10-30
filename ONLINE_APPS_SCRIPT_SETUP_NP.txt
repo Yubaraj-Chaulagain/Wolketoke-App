@@ -1,0 +1,30 @@
+WOLKETOKE ONLINE GROUP VOICE — अधिकतम १० मोबाइल
+
+यो संस्करणमा एउटै Online Room मा अधिकतम १० वटा मोबाइल जोडिन्छन्। सबैले एकै समयमा एकअर्काको आवाज सुन्न र बोल्न सक्छन् (Full Duplex Group Voice)। Push-to-Talk आवश्यक छैन। Microphone Mute/Unmute गर्न मिल्छ। पुरानो Offline Mode MainActivity मा यथावत् छ।
+
+आवश्यक सेटअप (एकपटक):
+1. एउटा Private Google Sheet बनाउनुहोस् र त्यसको Spreadsheet ID कपी गर्नुहोस्।
+2. Extensions > Apps Script खोल्नुहोस्। यस ZIP को GoogleAppsScript_Code.gs लाई Code.gs मा राखेर Save गर्नुहोस्।
+3. Apps Script > Project Settings > Script Properties मा यी तीनवटा सेट गर्नुहोस्:
+   SPREADSHEET_ID = Google Sheet ID
+   LIVEKIT_API_KEY = LiveKit API Key
+   LIVEKIT_API_SECRET = LiveKit API Secret
+4. setupWolketokeSheet() लाई एकपटक Run गरी अनुमति दिनुहोस्।
+5. Sheet को Config मा LiveKitServerURL मा वास्तविक wss:// LiveKit URL राख्नुहोस्। DefaultRoomName लाई नयाँ नाम राख्नुहोस्, उदाहरण: wolketoke-group-10
+   महत्वपूर्ण: पुरानो room पहिले नै बनेको भए त्यसमा १० जनाको सीमा स्वतः लागू हुँदैन। नयाँ र अद्वितीय room name प्रयोग गर्नुहोस्। पहिलो सफल connect मा Apps Script ले त्यो room maxParticipants=10 सहित बनाउनेछ।
+6. Apps Script मा Deploy > New deployment > Web app गर्नुहोस्। Execute as: Me, Who has access: Anyone छानेर Deploy गर्नुहोस्। /exec मा सकिने URL कपी गर्नुहोस्।
+7. app/src/main/assets/online.html मा PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE लाई आफ्नो /exec URL ले बदल्नुहोस्।
+8. नयाँ APK build गरेर सबै मोबाइलमा install गर्नुहोस्। सबैले एउटै APK र एउटै room प्रयोग गर्नुपर्छ।
+
+चलाउने तरिका:
+- JOIN ONLINE GROUP थिच्नुहोस् र Microphone permission Allow गर्नुहोस्।
+- जोडिएपछि सबैले एकअर्कालाई स्वतः सुन्छन् र एकै समयमा बोल्न सक्छन्।
+- बोल्न नचाहँदा MUTE MICROPHONE थिच्नुहोस्।
+- बाहिरिन LEAVE GROUP थिच्नुहोस्।
+
+ध्यान दिनुहोस्:
+- Internet र microphone permission अनिवार्य छन्।
+- LiveKit server चलिरहेको र बाहिरबाट पहुँचयोग्य हुनुपर्छ।
+- Apps Script URL APK बनाउनुअघि online.html मा राख्नुपर्छ।
+- Token १ घण्टापछि expire हुन्छ; फेरि JOIN गरेर नयाँ token लिन सकिन्छ।
+- Anyone access भएको सार्वजनिक token endpoint भएकाले यो trusted group का लागि मात्र हो। Device approval/login नभएसम्म URL पाउने अरू व्यक्तिले पनि जोडिन सक्छन्। API Secret कहिल्यै HTML, APK वा Google Sheet मा नराख्नुहोस्; Script Properties मै राख्नुहोस्।
