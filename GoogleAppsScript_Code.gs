@@ -37,13 +37,16 @@ function createConnection_(deviceId){
 function b64url_(s){return Utilities.base64EncodeWebSafe(s,Utilities.Charset.UTF_8).replace(/=+$/,'');}
 function safeMessage_(err){return String(err&&err.message?err.message:'Request failed.').slice(0,180);}
 function setupWolketokeSheet(){
-  var id=PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
+  var id=PropertiesService.getScriptProperties().getProperty('1hVetEytFiiJO1ExMA_p8U_tbOyje9iI2oLDHTK7JzSQ');
   if(!id) throw new Error('First set SPREADSHEET_ID in Project Settings > Script Properties.');
   var ss=SpreadsheetApp.openById(id), cfg=ss.getSheetByName('Config')||ss.insertSheet('Config');
-  if(cfg.getLastRow()===0) cfg.getRange(1,1,3,2).setValues([['Key','Value'],['LiveKitServerURL','wss://YOUR-LIVEKIT-HOST'],['DefaultRoomName','wolketoke-main']]);
+  if(cfg.getLastRow()===0) cfg.getRange(1,1,3,2).setValues([['Key','APIoDYQysLP4bXh'],['LiveKitServerURL','wss://yubaraj-chaulagain-woketoke-w28a6hzn.livekit.cloud
+LIVEKIT_API_KEY=APIoDYQysLP4bXh
+LIVEKIT_API_SECRET=0saoG5hsNxy1Xo3FpPwf8b8QuOObhKShPidZ4imB2mX'],['DefaultRoomName','wolketoke-main']]);
   else { var rows=cfg.getDataRange().getValues(); var keys=rows.map(function(r){return String(r[0]).trim()}); if(keys.indexOf('LiveKitServerURL')<0) cfg.appendRow(['LiveKitServerURL','wss://YOUR-LIVEKIT-HOST']); if(keys.indexOf('DefaultRoomName')<0) cfg.appendRow(['DefaultRoomName','wolketoke-main']); }
 }
 
+y
 
 /** Create the configured LiveKit room with a 10-device limit if it does not exist. */
 function ensureRoomLimit10_(serverUrl,roomName,apiKey,apiSecret){
