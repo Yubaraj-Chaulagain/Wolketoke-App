@@ -24,6 +24,7 @@ import android.media.AudioRecord;
 import android.media.AudioTrack;
 import android.media.MediaRecorder;
 import android.media.AudioManager;
+import android.media.AudioAttributes;
 import java.io.*;
 import java.net.*;
 import java.util.*;
@@ -31,11 +32,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 public class MainActivity extends Activity {
     static final int DISCOVERY_PORT=45454, AUDIO_PORT=45455, SAMPLE_RATE=16000, CHUNK=640;
-    // Offline mode supports 10 phones total: 1 host + up to 9 connected clients.
-    static final int MAX_CLIENTS=9;
+    // Offline mode supports many classroom phones: 1 host + up to 99 connected clients.
+    static final int MAX_CLIENTS=99;
     static final int REQ_PERMS=77;
     TextView status, role, wifiLabel, btLabel;
-    Button hostBtn, rescanBtn, talkBtn, stopBtn, nameBtn, onlineBtn;
+    Button hostBtn, rescanBtn, talkBtn, stopBtn, nameBtn, onlineBtn, bellBtn;
     EditText nameInput;
     LinearLayout wifiList, btList;
     volatile boolean hosting=false, connected=false, talking=false, running=true, connecting=false;
@@ -144,9 +145,13 @@ public class MainActivity extends Activity {
         nameInput=new EditText(this);nameInput.setSingleLine(true);nameInput.setText(deviceName);nameInput.setHint("Your display name");nameInput.setTextColor(Color.WHITE);nameInput.setHintTextColor(Color.LTGRAY);nameInput.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(117,209,255)));root.addView(nameInput,params());
         nameBtn=button("SAVE MY NAME");root.addView(nameBtn,params());
         role=new TextView(this);role.setText("Searching automatically…");role.setTextColor(Color.rgb(117,209,255));role.setTextSize(16);role.setGravity(Gravity.CENTER);root.addView(role,params());
-        hostBtn=button("START OFFLINE HOST");rescanBtn=button("SEARCH OFFLINE DEVICES");onlineBtn=button("🌐 ONLINE MODE (INTERNET)");talkBtn=button("HOLD TO TALK");stopBtn=button("DISCONNECT");
+        hostBtn=button("START OFFLINE HOST");rescanBtn=button("SEARCH OFFLINE DEVICES");onlineBtn=button("🌐 ONLINE MODE (INTERNET)");bellBtn=button("🔔 SCHOOL BELL");talkBtn=button("HOLD TO TALK");stopBtn=button("DISCONNECT");
         root.addView(hostBtn,params());root.addView(rescanBtn,params());root.addView(onlineBtn,params());
+        root.addView(bellBtn,params());
+        bellBtn.setEnabled(false);
+        bellBtn.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(170,105,25)));
         onlineBtn.setOnClickListener(v -> startActivity(new Intent(MainActivity.this, OnlineActivity.class)));
+        bellBtn.setOnClickListener(v -> sendSchoolBell());
         wifiLabel=section("Wi-Fi / Hotspot devices");root.addView(wifiLabel);
         wifiList=new LinearLayout(this);wifiList.setOrientation(1);root.addView(wifiList,new LinearLayout.LayoutParams(-1,-2));
         btLabel=section("Nearby Bluetooth devices (discovery only)");root.addView(btLabel);
@@ -222,7 +227,7 @@ public class MainActivity extends Activity {
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){requestNeededPermissions();setStatus("Allow microphone permission, then tap START HOST.");return;}
         if(hosting)return;
         hosting=true;connected=true;
-        runOnUiThread(()->{role.setText("HOST MODE • "+deviceName);talkBtn.setEnabled(true);hostBtn.setEnabled(false);});
+        runOnUiThread(()->{role.setText("HOST MODE • "+deviceName);talkBtn.setEnabled(true);bellBtn.setEnabled(true);hostBtn.setEnabled(false);});
         new Thread(()->{
             try{
                 serverSocket=new ServerSocket();serverSocket.setReuseAddress(true);serverSocket.bind(new InetSocketAddress(AUDIO_PORT));
@@ -237,7 +242,7 @@ public class MainActivity extends Activity {
                     }
                     Client c=new Client(s);
                     clients.add(c);
-                    setStatus("Offline connected: "+(clients.size()+1)+"/10 phones (host included)");
+                    setStatus("Offline connected: "+(clients.size()+1)+" phones (host included)");
                     new Thread(()->readClient(c)).start();
                 }
             }catch(Exception e){if(hosting)setStatus("Host error: "+e.getMessage());}
@@ -378,15 +383,16 @@ public class MainActivity extends Activity {
             while(hosting&&!c.socket.isClosed()){
                 int type=in.readUnsignedByte();int len=in.readInt();if(len<0||len>8192)break;byte[] data=new byte[len];in.readFully(data);
                 if(type==1){play(data);for(Client other:clients)if(other!=c)other.send(type,data);}
+                else if(type==2){playSchoolBell();for(Client other:clients)if(other!=c)other.send(type,data);}
             }
-        }catch(Exception ignored){}finally{clients.remove(c);try{c.socket.close();}catch(Exception ignored){}if(hosting)setStatus("Offline connected: "+(clients.size()+1)+"/10 phones (host included)");}
+        }catch(Exception ignored){}finally{clients.remove(c);try{c.socket.close();}catch(Exception ignored){}if(hosting)setStatus("Offline connected: "+(clients.size()+1)+" phones (host included)");}
     }
     void readServer(Socket s){
         try(DataInputStream in=new DataInputStream(new BufferedInputStream(s.getInputStream()))){
             while(connected&&!s.isClosed()){
-                int type=in.readUnsignedByte();int len=in.readInt();if(len<0||len>8192)break;byte[] data=new byte[len];in.readFully(data);if(type==1)play(data);
+                int type=in.readUnsignedByte();int len=in.readInt();if(len<0||len>8192)break;byte[] data=new byte[len];in.readFully(data);if(type==1)play(data); else if(type==2)playSchoolBell();
             }
-        }catch(Exception ignored){}finally{if(!hosting){connected=false;setStatus("Disconnected from host.");runOnUiThread(()->{talkBtn.setEnabled(false);hostBtn.setEnabled(true);});}}
+        }catch(Exception ignored){}finally{if(!hosting){connected=false;setStatus("Disconnected from host.");runOnUiThread(()->{talkBtn.setEnabled(false);bellBtn.setEnabled(false);hostBtn.setEnabled(true);});}}
     }
     void startTalking(){
         if(talking)return;
@@ -404,6 +410,37 @@ public class MainActivity extends Activity {
             finally{if(rec!=null){try{rec.stop();}catch(Exception ignored){}rec.release();}talking=false;}
         },"audio-capture").start();
     }
+
+    void sendSchoolBell(){
+        if(!hosting){ setStatus("School Bell: यो फोन HOST/Pion phone हुनुपर्छ।"); return; }
+        playSchoolBell();
+        byte[] data=new byte[]{1};
+        for(Client c:clients)c.send(2,data);
+        setStatus("🔔 SCHOOL BELL sent to "+clients.size()+" classroom phones.");
+    }
+
+    void playSchoolBell(){
+        new Thread(() -> {
+            try {
+                final int rate=44100;
+                int duration=1500;
+                short[] samples=new short[rate*duration/1000];
+                for(int i=0;i<samples.length;i++){
+                    double t=i/(double)rate;
+                    double env=Math.exp(-2.8*t);
+                    double tone=Math.sin(2*Math.PI*880*t)+0.55*Math.sin(2*Math.PI*1320*t);
+                    samples[i]=(short)(Math.max(-1,Math.min(1,tone*0.34*env))*32767);
+                }
+                int min=AudioTrack.getMinBufferSize(rate,AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT);
+                AudioTrack bell=new AudioTrack(AudioManager.STREAM_MUSIC,rate,AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT,Math.max(min,samples.length*2),AudioTrack.MODE_STATIC);
+                bell.write(samples,0,samples.length);
+                bell.play();
+                Thread.sleep(duration+100);
+                bell.release();
+            }catch(Exception ignored){}
+        },"school-bell").start();
+    }
+
     void stopTalking(){talking=false;setStatus("Ready to talk.");}
     synchronized void play(byte[] pcm){
         try{
@@ -420,7 +457,7 @@ public class MainActivity extends Activity {
         try{if(serverSocket!=null)serverSocket.close();}catch(Exception ignored){}
         try{if(clientSocket!=null)clientSocket.close();}catch(Exception ignored){}
         for(Client c:clients)try{c.socket.close();}catch(Exception ignored){}clients.clear();
-        runOnUiThread(()->{talkBtn.setEnabled(false);role.setText("Searching…");hostBtn.setEnabled(true);});
+        runOnUiThread(()->{talkBtn.setEnabled(false);bellBtn.setEnabled(false);role.setText("Searching…");hostBtn.setEnabled(true);});
         setStatus("Disconnected. Auto search continues.");
     }
     @Override public void onDestroy(){
