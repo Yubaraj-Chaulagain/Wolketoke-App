@@ -9,7 +9,7 @@
 <div id="connected" class="hidden"><div class="stats"><div class="pill">Devices connected<br><strong id="count">1 / 10</strong></div><div class="pill">Microphone<br><strong id="micState">ON</strong></div></div><button id="mute" class="secondary">MUTE MICROPHONE</button><button id="disconnect" class="secondary">LEAVE GROUP</button></div>
 <div id="status" class="status" role="status">Ready. Tap JOIN ONLINE GROUP to connect.</div><p class="small">Internet and microphone permission are required. The administrator must configure Apps Script and LiveKit first. Maximum 10 participants per room is set by the token service when the room is first created.</p></section></main>
 <script>
-const APPS_SCRIPT_URL='PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE';
+const APPS_SCRIPT_URL='https://script.google.com/macros/s/AKfycbzXliVLVRF6XQufmcS1zPK8fZkz77crHzbqYVOehghtplCvmoDCMpr_cvwotPB0y-hABA/exec';
 const $=id=>document.getElementById(id);let room=null,localTrack=null,isMuted=false,RoomEventRef=null;
 function status(s){$('status').textContent=s}
 function getDeviceId(){let id=localStorage.getItem('wolketoke_device_id');if(!id){id='WK-'+(crypto.randomUUID?crypto.randomUUID().slice(0,8):Math.random().toString(36).slice(2,10)).toUpperCase();localStorage.setItem('wolketoke_device_id',id)}return id}
