@@ -24,6 +24,9 @@ import android.media.AudioRecord;
 import android.media.AudioTrack;
 import android.media.MediaRecorder;
 import android.media.AudioManager;
+import android.media.Ringtone;
+import android.media.RingtoneManager;
+import android.media.AudioAttributes;
 import java.io.*;
 import java.net.*;
 import java.util.*;
@@ -44,6 +47,7 @@ public class MainActivity extends Activity {
     Socket clientSocket;
     DataOutputStream clientOut;
     AudioTrack player;
+    Ringtone bellRingtone;
     WifiManager.MulticastLock multicastLock;
     final Object writeLock=new Object();
     String hostAddress="";
@@ -410,31 +414,47 @@ public class MainActivity extends Activity {
         },"audio-capture").start();
     }
     void sendSchoolBell(){
-        if(!hosting){ setStatus("School Bell: यो फोन HOST/Pion phone हुनुपर्छ।"); return; }
-        playSchoolBell();
-        byte[] data=new byte[]{1};
-        for(Client c:clients)c.send(2,data);
-        setStatus("🔔 SCHOOL BELL sent to "+clients.size()+" classroom phones.");
+        if(!hosting){
+            setStatus("School Bell: यो फोन HOST/Pion phone हुनुपर्छ।");
+            return;
+        }
+        try{
+            playSchoolBell();
+            byte[] data=new byte[]{1};
+            for(Client c:clients)c.send(2,data);
+            setStatus("🔔 SCHOOL BELL sent to "+clients.size()+" classroom phones.");
+        }catch(Throwable e){
+            // Never let a bell/audio problem close the Walkie-Talkie app.
+            setStatus("🔔 Bell sent. Audio playback was unavailable on this phone.");
+        }
     }
 
     void playSchoolBell(){
-        // Play a bundled WAV file. This avoids ToneGenerator/AudioTrack native crashes.
-        new Thread(() -> {
-            android.media.MediaPlayer mp=null;
-            try {
-                mp=android.media.MediaPlayer.create(MainActivity.this, R.raw.school_bell);
-                if(mp==null){ setStatus("Bell sound could not be loaded."); return; }
-                final android.media.MediaPlayer fmp=mp;
-                fmp.setOnCompletionListener(android.media.MediaPlayer::release);
-                fmp.setOnErrorListener((player, what, extra) -> { try{player.release();}catch(Exception ignored){} return true; });
-                fmp.setVolume(1.0f,1.0f);
-                fmp.start();
-                mp=null;
-            } catch(Throwable e){
-                if(mp!=null){try{mp.release();}catch(Exception ignored){}}
-                setStatus("Bell sound error.");
+        // Use Android's built-in alarm/notification ringtone.
+        // This avoids custom MediaPlayer/AudioTrack decoding crashes on some Samsung devices.
+        runOnUiThread(() -> {
+            try{
+                if(bellRingtone!=null && bellRingtone.isPlaying()){
+                    try{bellRingtone.stop();}catch(Exception ignored){}
+                }
+                android.net.Uri uri=RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
+                if(uri==null) uri=RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+                if(uri==null){ setStatus("Bell sound is not available on this phone."); return; }
+                bellRingtone=RingtoneManager.getRingtone(getApplicationContext(),uri);
+                if(bellRingtone==null){ setStatus("Bell sound is not available on this phone."); return; }
+                if(Build.VERSION.SDK_INT>=21){
+                    bellRingtone.setAudioAttributes(new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build());
+                }else{
+                    bellRingtone.setStreamType(AudioManager.STREAM_ALARM);
+                }
+                bellRingtone.play();
+            }catch(Throwable e){
+                setStatus("Bell sound is unavailable; app remains running.");
             }
-        },"school-bell").start();
+        });
     }
 
     void stopTalking(){talking=false;setStatus("Ready to talk.");}
@@ -457,7 +477,9 @@ public class MainActivity extends Activity {
         setStatus("Disconnected. Auto search continues.");
     }
     @Override public void onDestroy(){
-        running=false;disconnectAll();
+        running=false;
+        try{if(bellRingtone!=null && bellRingtone.isPlaying())bellRingtone.stop();}catch(Exception ignored){}
+        disconnectAll();
         try{if(btAdapter!=null&&btAdapter.isDiscovering())btAdapter.cancelDiscovery();}catch(Exception ignored){}
         if(btReceiver!=null){try{unregisterReceiver(btReceiver);}catch(Exception ignored){}}
         if(player!=null){player.release();player=null;}
