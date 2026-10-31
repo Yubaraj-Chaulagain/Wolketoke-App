@@ -24,8 +24,6 @@ import android.media.AudioRecord;
 import android.media.AudioTrack;
 import android.media.MediaRecorder;
 import android.media.AudioManager;
-import android.media.ToneGenerator;
-import android.media.AudioAttributes;
 import java.io.*;
 import java.net.*;
 import java.util.*;
@@ -33,8 +31,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 public class MainActivity extends Activity {
     static final int DISCOVERY_PORT=45454, AUDIO_PORT=45455, SAMPLE_RATE=16000, CHUNK=640;
-    // Offline mode supports many classroom phones: 1 host + up to 99 connected clients.
-    static final int MAX_CLIENTS=99;
+    // Offline mode supports 10 phones total: 1 host + up to 9 connected clients.
+    static final int MAX_CLIENTS=9;
     static final int REQ_PERMS=77;
     TextView status, role, wifiLabel, btLabel;
     Button hostBtn, rescanBtn, talkBtn, stopBtn, nameBtn, onlineBtn, bellBtn;
@@ -151,8 +149,8 @@ public class MainActivity extends Activity {
         root.addView(bellBtn,params());
         bellBtn.setEnabled(false);
         bellBtn.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(170,105,25)));
-        onlineBtn.setOnClickListener(v -> startActivity(new Intent(MainActivity.this, OnlineActivity.class)));
         bellBtn.setOnClickListener(v -> sendSchoolBell());
+        onlineBtn.setOnClickListener(v -> startActivity(new Intent(MainActivity.this, OnlineActivity.class)));
         wifiLabel=section("Wi-Fi / Hotspot devices");root.addView(wifiLabel);
         wifiList=new LinearLayout(this);wifiList.setOrientation(1);root.addView(wifiList,new LinearLayout.LayoutParams(-1,-2));
         btLabel=section("Nearby Bluetooth devices (discovery only)");root.addView(btLabel);
@@ -243,7 +241,7 @@ public class MainActivity extends Activity {
                     }
                     Client c=new Client(s);
                     clients.add(c);
-                    setStatus("Offline connected: "+(clients.size()+1)+" phones (host included)");
+                    setStatus("Offline connected: "+(clients.size()+1)+"/10 phones (host included)");
                     new Thread(()->readClient(c)).start();
                 }
             }catch(Exception e){if(hosting)setStatus("Host error: "+e.getMessage());}
@@ -386,7 +384,7 @@ public class MainActivity extends Activity {
                 if(type==1){play(data);for(Client other:clients)if(other!=c)other.send(type,data);}
                 else if(type==2){playSchoolBell();for(Client other:clients)if(other!=c)other.send(type,data);}
             }
-        }catch(Exception ignored){}finally{clients.remove(c);try{c.socket.close();}catch(Exception ignored){}if(hosting)setStatus("Offline connected: "+(clients.size()+1)+" phones (host included)");}
+        }catch(Exception ignored){}finally{clients.remove(c);try{c.socket.close();}catch(Exception ignored){}if(hosting)setStatus("Offline connected: "+(clients.size()+1)+"/10 phones (host included)");}
     }
     void readServer(Socket s){
         try(DataInputStream in=new DataInputStream(new BufferedInputStream(s.getInputStream()))){
@@ -411,7 +409,6 @@ public class MainActivity extends Activity {
             finally{if(rec!=null){try{rec.stop();}catch(Exception ignored){}rec.release();}talking=false;}
         },"audio-capture").start();
     }
-
     void sendSchoolBell(){
         if(!hosting){ setStatus("School Bell: यो फोन HOST/Pion phone हुनुपर्छ।"); return; }
         playSchoolBell();
@@ -421,22 +418,21 @@ public class MainActivity extends Activity {
     }
 
     void playSchoolBell(){
-        // Use Android ToneGenerator for maximum device compatibility.
-        // This avoids AudioTrack buffer/device-specific crashes when Bell is pressed.
+        // Play a bundled WAV file. This avoids ToneGenerator/AudioTrack native crashes.
         new Thread(() -> {
-            ToneGenerator tone = null;
+            android.media.MediaPlayer mp=null;
             try {
-                tone = new ToneGenerator(AudioManager.STREAM_MUSIC, 100);
-                tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 350);
-                Thread.sleep(420);
-                tone.startTone(ToneGenerator.TONE_PROP_BEEP, 450);
-                Thread.sleep(500);
-            } catch (Throwable ignored) {
-                // Never allow Bell audio failure to close the app.
-            } finally {
-                if (tone != null) {
-                    try { tone.release(); } catch (Throwable ignored) {}
-                }
+                mp=android.media.MediaPlayer.create(MainActivity.this, R.raw.school_bell);
+                if(mp==null){ setStatus("Bell sound could not be loaded."); return; }
+                final android.media.MediaPlayer fmp=mp;
+                fmp.setOnCompletionListener(android.media.MediaPlayer::release);
+                fmp.setOnErrorListener((player, what, extra) -> { try{player.release();}catch(Exception ignored){} return true; });
+                fmp.setVolume(1.0f,1.0f);
+                fmp.start();
+                mp=null;
+            } catch(Throwable e){
+                if(mp!=null){try{mp.release();}catch(Exception ignored){}}
+                setStatus("Bell sound error.");
             }
         },"school-bell").start();
     }
