@@ -24,6 +24,7 @@ import android.media.AudioRecord;
 import android.media.AudioTrack;
 import android.media.MediaRecorder;
 import android.media.AudioManager;
+import android.media.ToneGenerator;
 import android.media.AudioAttributes;
 import java.io.*;
 import java.net.*;
@@ -420,24 +421,23 @@ public class MainActivity extends Activity {
     }
 
     void playSchoolBell(){
+        // Use Android ToneGenerator for maximum device compatibility.
+        // This avoids AudioTrack buffer/device-specific crashes when Bell is pressed.
         new Thread(() -> {
+            ToneGenerator tone = null;
             try {
-                final int rate=44100;
-                int duration=1500;
-                short[] samples=new short[rate*duration/1000];
-                for(int i=0;i<samples.length;i++){
-                    double t=i/(double)rate;
-                    double env=Math.exp(-2.8*t);
-                    double tone=Math.sin(2*Math.PI*880*t)+0.55*Math.sin(2*Math.PI*1320*t);
-                    samples[i]=(short)(Math.max(-1,Math.min(1,tone*0.34*env))*32767);
+                tone = new ToneGenerator(AudioManager.STREAM_MUSIC, 100);
+                tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 350);
+                Thread.sleep(420);
+                tone.startTone(ToneGenerator.TONE_PROP_BEEP, 450);
+                Thread.sleep(500);
+            } catch (Throwable ignored) {
+                // Never allow Bell audio failure to close the app.
+            } finally {
+                if (tone != null) {
+                    try { tone.release(); } catch (Throwable ignored) {}
                 }
-                int min=AudioTrack.getMinBufferSize(rate,AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT);
-                AudioTrack bell=new AudioTrack(AudioManager.STREAM_MUSIC,rate,AudioFormat.CHANNEL_OUT_MONO,AudioFormat.ENCODING_PCM_16BIT,Math.max(min,samples.length*2),AudioTrack.MODE_STATIC);
-                bell.write(samples,0,samples.length);
-                bell.play();
-                Thread.sleep(duration+100);
-                bell.release();
-            }catch(Exception ignored){}
+            }
         },"school-bell").start();
     }
 
