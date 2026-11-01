@@ -391,8 +391,17 @@ public class MainActivity extends Activity {
             while(hosting&&!c.socket.isClosed()){
                 int type=in.readUnsignedByte();int len=in.readInt();if(len<0||len>8192)break;byte[] data=new byte[len];in.readFully(data);
                 if(type==1){play(data);for(Client other:clients)if(other!=c)other.send(type,data);}
-                else if(type==2){startSchoolBellLocal();for(Client other:clients)other.send(type,data);}
-                else if(type==3){stopSchoolBellLocal();for(Client other:clients)other.send(type,data);}
+                else if(type==2){
+                    // The host is authoritative: start locally and broadcast to EVERY client,
+                    // including the phone that requested the bell, so all devices stay in sync.
+                    startSchoolBellLocal();
+                    for(Client other:clients)other.send(2,new byte[]{1});
+                }
+                else if(type==3){
+                    // Stop the bell on the host and every connected phone with one command.
+                    stopSchoolBellLocal();
+                    for(Client other:clients)other.send(3,new byte[]{1});
+                }
             }
         }catch(Exception ignored){}finally{clients.remove(c);try{c.socket.close();}catch(Exception ignored){}if(hosting)setStatus("Offline connected: "+(clients.size()+1)+"/10 phones (host included)");}
     }
@@ -431,9 +440,10 @@ public class MainActivity extends Activity {
     void sendSchoolBellCommand(int command){
         final byte[] data=new byte[]{1};
         if(hosting){
+            // Host starts/stops its own bell, then broadcasts the same state to all clients.
             if(command==2) startSchoolBellLocal(); else stopSchoolBellLocal();
             for(Client c:clients)c.send(command,data);
-            setStatus(command==2 ? "🔔 School Bell started on this phone and "+clients.size()+" connected phones." : "🔕 School Bell stopped on all connected phones.");
+            setStatus(command==2 ? "🔔 School Bell started on this phone and all connected phones." : "🔕 School Bell stopped on all connected phones.");
             return;
         }
         Socket activeSocket=clientSocket;
@@ -446,9 +456,9 @@ public class MainActivity extends Activity {
                     activeOut.write(data);
                     activeOut.flush();
                 }
-                // Play on the phone that pressed the button too; the host relays to the other phones.
-                if(command==2) startSchoolBellLocal(); else stopSchoolBellLocal();
-                setStatus(command==2 ? "🔔 School Bell command sent to Host and started here." : "🔕 School Bell stop command sent to Host.");
+                // Do not start/stop locally here. Wait for the host's broadcast so the
+                // requesting phone and every other phone follow one authoritative command.
+                setStatus(command==2 ? "🔔 Bell start command sent to Host…" : "🔕 Bell stop command sent to Host…");
             }catch(Exception e){
                 connected=false;
                 try{activeSocket.close();}catch(Exception ignored){}
