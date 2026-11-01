@@ -378,7 +378,7 @@ public class MainActivity extends Activity {
         setStatus("Connecting to "+ip+"…");
         new Thread(()->{
             try{
-                Socket s=new Socket();s.connect(new InetSocketAddress(ip,AUDIO_PORT),5000);s.setTcpNoDelay(true);
+                Socket s=new Socket();s.connect(new InetSocketAddress(ip,AUDIO_PORT),5000);s.setTcpNoDelay(true);s.setKeepAlive(true);
                 clientSocket=s;clientOut=new DataOutputStream(new BufferedOutputStream(s.getOutputStream()));connected=true;connecting=false;
                 runOnUiThread(()->{role.setText("CONNECTED TO "+ip);talkBtn.setEnabled(true);bellBtn.setEnabled(true);hostBtn.setEnabled(false);});
                 setStatus("Connected. Hold HOLD TO TALK to speak.");
@@ -420,24 +420,44 @@ public class MainActivity extends Activity {
         },"audio-capture").start();
     }
     void toggleSchoolBell(){
-        if(bellActive){ sendSchoolBellCommand(3); }
-        else { sendSchoolBellCommand(2); }
+        // Keep the button action safe even if Android reports a stale network/audio state.
+        try {
+            sendSchoolBellCommand(bellActive ? 3 : 2);
+        } catch (Throwable e) {
+            setStatus("Bell could not start. Please reconnect to the Host and try again.");
+        }
     }
 
     void sendSchoolBellCommand(int command){
-        byte[] data=new byte[]{1};
+        final byte[] data=new byte[]{1};
         if(hosting){
             if(command==2) startSchoolBellLocal(); else stopSchoolBellLocal();
             for(Client c:clients)c.send(command,data);
             setStatus(command==2 ? "🔔 School Bell started on this phone and "+clients.size()+" connected phones." : "🔕 School Bell stopped on all connected phones.");
-        }else if(connected && clientOut!=null){
+            return;
+        }
+        Socket activeSocket=clientSocket;
+        DataOutputStream activeOut=clientOut;
+        if(connected && activeSocket!=null && activeOut!=null && activeSocket.isConnected() && !activeSocket.isClosed()){
             try{
-                synchronized(writeLock){clientOut.writeByte(command);clientOut.writeInt(data.length);clientOut.write(data);clientOut.flush();}
-                // Host relays the command back to every other connected classroom phone.
-                setStatus(command==2 ? "🔔 School Bell start request sent to host." : "🔕 School Bell stop request sent to host.");
-            }catch(Exception e){setStatus("Bell command failed. Check connection to host.");}
+                synchronized(writeLock){
+                    activeOut.writeByte(command);
+                    activeOut.writeInt(data.length);
+                    activeOut.write(data);
+                    activeOut.flush();
+                }
+                // Play on the phone that pressed the button too; the host relays to the other phones.
+                if(command==2) startSchoolBellLocal(); else stopSchoolBellLocal();
+                setStatus(command==2 ? "🔔 School Bell command sent to Host and started here." : "🔕 School Bell stop command sent to Host.");
+            }catch(Exception e){
+                connected=false;
+                try{activeSocket.close();}catch(Exception ignored){}
+                runOnUiThread(()->{talkBtn.setEnabled(false);bellBtn.setEnabled(false);hostBtn.setEnabled(true);role.setText("DISCONNECTED — SEARCH HOST AGAIN");});
+                setStatus("Host connection was lost. Tap SEARCH OFFLINE DEVICES to reconnect.");
+            }
         }else{
-            setStatus("पहिले START OFFLINE HOST वा Host मा Connect गर्नुहोस्।");
+            connected=false;
+            setStatus("Host is not connected. Search and connect to the Host again.");
         }
     }
 
