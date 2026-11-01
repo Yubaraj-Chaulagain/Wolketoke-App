@@ -1,30 +1,35 @@
-WOLKETOKE ONLINE GROUP VOICE — अधिकतम १० मोबाइल
+WOLKETOKE ONLINE GROUP VOICE — मिलाइएको Setup Guide
 
-यो संस्करणमा एउटै Online Room मा अधिकतम १० वटा मोबाइल जोडिन्छन्। सबैले एकै समयमा एकअर्काको आवाज सुन्न र बोल्न सक्छन् (Full Duplex Group Voice)। Push-to-Talk आवश्यक छैन। Microphone Mute/Unmute गर्न मिल्छ। पुरानो Offline Mode MainActivity मा यथावत् छ।
+यस ZIP मा पुरानो Offline Mode यथावत् छ। Online Mode LiveKit Cloud प्रयोग गर्छ। एउटै Room मा अधिकतम १० जना जोडिन सक्छन् र सबैले एकै समयमा बोल्न/सुन्न सक्छन्।
 
-आवश्यक सेटअप (एकपटक):
-1. एउटा Private Google Sheet बनाउनुहोस् र त्यसको Spreadsheet ID कपी गर्नुहोस्।
-2. Extensions > Apps Script खोल्नुहोस्। यस ZIP को GoogleAppsScript_Code.gs लाई Code.gs मा राखेर Save गर्नुहोस्।
-3. Apps Script > Project Settings > Script Properties मा यी तीनवटा सेट गर्नुहोस्:
-   SPREADSHEET_ID = Google Sheet ID
-   LIVEKIT_API_KEY = LiveKit API Key
-   LIVEKIT_API_SECRET = LiveKit API Secret
-4. setupWolketokeSheet() लाई एकपटक Run गरी अनुमति दिनुहोस्।
-5. Sheet को Config मा LiveKitServerURL मा वास्तविक wss:// LiveKit URL राख्नुहोस्। DefaultRoomName लाई नयाँ नाम राख्नुहोस्, उदाहरण: wolketoke-group-10
-   महत्वपूर्ण: पुरानो room पहिले नै बनेको भए त्यसमा १० जनाको सीमा स्वतः लागू हुँदैन। नयाँ र अद्वितीय room name प्रयोग गर्नुहोस्। पहिलो सफल connect मा Apps Script ले त्यो room maxParticipants=10 सहित बनाउनेछ।
-6. Apps Script मा Deploy > New deployment > Web app गर्नुहोस्। Execute as: Me, Who has access: Anyone छानेर Deploy गर्नुहोस्। /exec मा सकिने URL कपी गर्नुहोस्।
-7. app/src/main/assets/online.html मा PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE लाई आफ्नो /exec URL ले बदल्नुहोस्।
-8. नयाँ APK build गरेर सबै मोबाइलमा install गर्नुहोस्। सबैले एउटै APK र एउटै room प्रयोग गर्नुपर्छ।
+A. Google Sheet र Apps Script
+1) एउटा नयाँ/Private Google Sheet बनाउनुहोस्। URL मा /d/ र /edit बीचको भाग Spreadsheet ID हो।
+2) Sheet बाट Extensions > Apps Script खोल्नुहोस्। यस ZIP को GoogleAppsScript_Code.gs भित्रको सबै code Code.gs मा राखेर Save गर्नुहोस्।
+3) Apps Script > Project Settings > Script Properties मा यी चार property थप्नुहोस्:
+   SPREADSHEET_ID = तपाईंको Google Sheet ID
+   LIVEKIT_API_KEY = LiveKit को नयाँ API Key
+   LIVEKIT_API_SECRET = LiveKit को नयाँ API Secret
+   LIVEKIT_SERVER_URL = wss://your-project.livekit.cloud (तपाईंको वास्तविक LiveKit URL)
+   API Secret HTML, APK वा GitHub मा नराख्नुहोस्।
+4) Function dropdown बाट setupWolketokeSheet छानेर Run गर्नुहोस् र Google permissions Allow गर्नुहोस्। यसले Config र ConnectionLog sheet बनाउँछ।
+5) Config sheet मा DefaultRoomName लाई नयाँ, अरूले प्रयोग नगरेको नाम राख्नुहोस् (उदाहरण: wolketoke-room-2026-11)। MaxParticipants 10 राख्नुहोस्। LiveKitServerURL पनि सही छ भनी जाँच्नुहोस्। नयाँ Room नामले १० जनाको सीमा निश्चित गर्छ; पहिलेबाट बनेको पुरानो Room प्रयोग नगर्नुहोस्।
+6) Deploy > New deployment > Web app छान्नुहोस्। Execute as: Me र Who has access: Anyone राखेर Deploy गर्नुहोस्। /exec मा सकिने Web app URL कपी गर्नुहोस्। Code परिवर्तनपछि Deploy > Manage deployments > Edit > New version > Deploy गर्नुहोस्।
 
-चलाउने तरिका:
-- JOIN ONLINE GROUP थिच्नुहोस् र Microphone permission Allow गर्नुहोस्।
-- जोडिएपछि सबैले एकअर्कालाई स्वतः सुन्छन् र एकै समयमा बोल्न सक्छन्।
-- बोल्न नचाहँदा MUTE MICROPHONE थिच्नुहोस्।
-- बाहिरिन LEAVE GROUP थिच्नुहोस्।
+B. APK मा Apps Script URL राख्ने
+7) GitHub मा यी दुवै फाइल खोल्नुहोस् र APPS_SCRIPT_URL को value लाई एउटै नयाँ /exec URL ले बदल्नुहोस्:
+   app/src/main/assets/online.html
+   app/src/main/java/com/yubaraj/walkietalkie/online.html
+   उदाहरण: const APPS_SCRIPT_URL='https://script.google.com/macros/s/...../exec';
+   दुवै फाइलमा एउटै URL हुनुपर्छ। यस ZIP मा placeholder राखिएको छ, त्यसैले बदल्न नबिर्सनुहोस्।
+8) दुवै फाइल Save/Commit गर्नुहोस्। GitHub Actions > Build Wolketoke Walkie-Talkie APK > Run workflow गर्नुहोस्। Build सफल भएपछि Release बाट APK डाउनलोड गरेर सबै फोनमा install गर्नुहोस्।
 
-ध्यान दिनुहोस्:
-- Internet र microphone permission अनिवार्य छन्।
-- LiveKit server चलिरहेको र बाहिरबाट पहुँचयोग्य हुनुपर्छ।
-- Apps Script URL APK बनाउनुअघि online.html मा राख्नुपर्छ।
-- Token १ घण्टापछि expire हुन्छ; फेरि JOIN गरेर नयाँ token लिन सकिन्छ।
-- Anyone access भएको सार्वजनिक token endpoint भएकाले यो trusted group का लागि मात्र हो। Device approval/login नभएसम्म URL पाउने अरू व्यक्तिले पनि जोडिन सक्छन्। API Secret कहिल्यै HTML, APK वा Google Sheet मा नराख्नुहोस्; Script Properties मै राख्नुहोस्।
+C. चलाउने तरिका
+9) सबै फोनमा Internet खोल्नुहोस्। App > ONLINE MODE > JOIN ONLINE GROUP थिच्नुहोस्। Microphone permission Allow गर्नुहोस्। सबै फोनले एउटै APK र एउटै Room प्रयोग गर्नुपर्छ।
+10) सबै जना जोडिएपछि सबैले एकअर्काको आवाज सुन्न र एकै समयमा बोल्न सक्छन्। MUTE MICROPHONE ले आफ्नो आवाज बन्द गर्छ। LEAVE GROUP ले बाहिर निकाल्छ।
+
+महत्त्वपूर्ण
+- Offline Mode चलाउन LiveKit/Internet आवश्यक छैन; Online Mode का लागि Internet आवश्यक छ।
+- Token १ घण्टामा expire हुन्छ; फेरि Join गर्दा नयाँ token पाइन्छ।
+- Apps Script endpoint Anyone access भएकोले यो private invitation system होइन। URL पाउने जोसुकैले token माग्न सक्छ। हालको build मा login/device approval छैन; संवेदनशील/गोप्य कुराकानीका लागि प्रयोग नगर्नुहोस्।
+- LiveKit credentials सही हुनुपर्छ। पुरानो API Secret सार्वजनिक भएकोले revoke गरी नयाँ Secret मात्र Script Properties मा राख्नुहोस्।
+- १० जनाभन्दा बढी जोडिन खोजेमा Room ले अस्वीकार गर्छ।
