@@ -15,6 +15,7 @@ import android.net.wifi.WifiInfo;
 import android.net.DhcpInfo;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.widget.*;
@@ -48,6 +49,9 @@ public class MainActivity extends Activity {
     DataOutputStream clientOut;
     AudioTrack player;
     Ringtone bellRingtone;
+    volatile boolean bellActive=false;
+    final Handler bellHandler=new Handler(android.os.Looper.getMainLooper());
+    final Runnable bellRepeat= new Runnable(){ public void run(){ if(bellActive){ try{ if(bellRingtone!=null){ if(bellRingtone.isPlaying()) bellRingtone.stop(); bellRingtone.play(); } }catch(Throwable ignored){} bellHandler.postDelayed(this,2500); } } };
     WifiManager.MulticastLock multicastLock;
     final Object writeLock=new Object();
     String hostAddress="";
@@ -152,8 +156,9 @@ public class MainActivity extends Activity {
         root.addView(hostBtn,params());root.addView(rescanBtn,params());root.addView(onlineBtn,params());
         root.addView(bellBtn,params());
         bellBtn.setEnabled(false);
+        bellBtn.setText("🔔 START SCHOOL BELL");
         bellBtn.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(170,105,25)));
-        bellBtn.setOnClickListener(v -> sendSchoolBell());
+        bellBtn.setOnClickListener(v -> toggleSchoolBell());
         onlineBtn.setOnClickListener(v -> startActivity(new Intent(MainActivity.this, OnlineActivity.class)));
         wifiLabel=section("Wi-Fi / Hotspot devices");root.addView(wifiLabel);
         wifiList=new LinearLayout(this);wifiList.setOrientation(1);root.addView(wifiList,new LinearLayout.LayoutParams(-1,-2));
@@ -375,7 +380,7 @@ public class MainActivity extends Activity {
             try{
                 Socket s=new Socket();s.connect(new InetSocketAddress(ip,AUDIO_PORT),5000);s.setTcpNoDelay(true);
                 clientSocket=s;clientOut=new DataOutputStream(new BufferedOutputStream(s.getOutputStream()));connected=true;connecting=false;
-                runOnUiThread(()->{role.setText("CONNECTED TO "+ip);talkBtn.setEnabled(true);hostBtn.setEnabled(false);});
+                runOnUiThread(()->{role.setText("CONNECTED TO "+ip);talkBtn.setEnabled(true);bellBtn.setEnabled(true);hostBtn.setEnabled(false);});
                 setStatus("Connected. Hold HOLD TO TALK to speak.");
                 readServer(s);
             }catch(Exception e){connected=false;connecting=false;setStatus("Connection failed. Confirm same hotspot and Host is running.");runOnUiThread(()->hostBtn.setEnabled(true));}
@@ -386,16 +391,17 @@ public class MainActivity extends Activity {
             while(hosting&&!c.socket.isClosed()){
                 int type=in.readUnsignedByte();int len=in.readInt();if(len<0||len>8192)break;byte[] data=new byte[len];in.readFully(data);
                 if(type==1){play(data);for(Client other:clients)if(other!=c)other.send(type,data);}
-                else if(type==2){playSchoolBell();for(Client other:clients)if(other!=c)other.send(type,data);}
+                else if(type==2){startSchoolBellLocal();for(Client other:clients)other.send(type,data);}
+                else if(type==3){stopSchoolBellLocal();for(Client other:clients)other.send(type,data);}
             }
         }catch(Exception ignored){}finally{clients.remove(c);try{c.socket.close();}catch(Exception ignored){}if(hosting)setStatus("Offline connected: "+(clients.size()+1)+"/10 phones (host included)");}
     }
     void readServer(Socket s){
         try(DataInputStream in=new DataInputStream(new BufferedInputStream(s.getInputStream()))){
             while(connected&&!s.isClosed()){
-                int type=in.readUnsignedByte();int len=in.readInt();if(len<0||len>8192)break;byte[] data=new byte[len];in.readFully(data);if(type==1)play(data); else if(type==2)playSchoolBell();
+                int type=in.readUnsignedByte();int len=in.readInt();if(len<0||len>8192)break;byte[] data=new byte[len];in.readFully(data);if(type==1)play(data); else if(type==2)startSchoolBellLocal(); else if(type==3)stopSchoolBellLocal();
             }
-        }catch(Exception ignored){}finally{if(!hosting){connected=false;setStatus("Disconnected from host.");runOnUiThread(()->{talkBtn.setEnabled(false);bellBtn.setEnabled(false);hostBtn.setEnabled(true);});}}
+        }catch(Exception ignored){}finally{if(!hosting){connected=false;stopSchoolBellLocal();setStatus("Disconnected from host.");runOnUiThread(()->{talkBtn.setEnabled(false);bellBtn.setEnabled(false);hostBtn.setEnabled(true);});}}
     }
     void startTalking(){
         if(talking)return;
@@ -413,47 +419,65 @@ public class MainActivity extends Activity {
             finally{if(rec!=null){try{rec.stop();}catch(Exception ignored){}rec.release();}talking=false;}
         },"audio-capture").start();
     }
-    void sendSchoolBell(){
-        if(!hosting){
-            setStatus("School Bell: यो फोन HOST/Pion phone हुनुपर्छ।");
-            return;
-        }
-        try{
-            playSchoolBell();
-            byte[] data=new byte[]{1};
-            for(Client c:clients)c.send(2,data);
-            setStatus("🔔 SCHOOL BELL sent to "+clients.size()+" classroom phones.");
-        }catch(Throwable e){
-            // Never let a bell/audio problem close the Walkie-Talkie app.
-            setStatus("🔔 Bell sent. Audio playback was unavailable on this phone.");
+    void toggleSchoolBell(){
+        if(bellActive){ sendSchoolBellCommand(3); }
+        else { sendSchoolBellCommand(2); }
+    }
+
+    void sendSchoolBellCommand(int command){
+        byte[] data=new byte[]{1};
+        if(hosting){
+            if(command==2) startSchoolBellLocal(); else stopSchoolBellLocal();
+            for(Client c:clients)c.send(command,data);
+            setStatus(command==2 ? "🔔 School Bell started on this phone and "+clients.size()+" connected phones." : "🔕 School Bell stopped on all connected phones.");
+        }else if(connected && clientOut!=null){
+            try{
+                synchronized(writeLock){clientOut.writeByte(command);clientOut.writeInt(data.length);clientOut.write(data);clientOut.flush();}
+                // Host relays the command back to every other connected classroom phone.
+                setStatus(command==2 ? "🔔 School Bell start request sent to host." : "🔕 School Bell stop request sent to host.");
+            }catch(Exception e){setStatus("Bell command failed. Check connection to host.");}
+        }else{
+            setStatus("पहिले START OFFLINE HOST वा Host मा Connect गर्नुहोस्।");
         }
     }
 
-    void playSchoolBell(){
-        // Use Android's built-in alarm/notification ringtone.
-        // This avoids custom MediaPlayer/AudioTrack decoding crashes on some Samsung devices.
-        runOnUiThread(() -> {
-            try{
-                if(bellRingtone!=null && bellRingtone.isPlaying()){
-                    try{bellRingtone.stop();}catch(Exception ignored){}
-                }
-                android.net.Uri uri=RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
-                if(uri==null) uri=RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
-                if(uri==null){ setStatus("Bell sound is not available on this phone."); return; }
-                bellRingtone=RingtoneManager.getRingtone(getApplicationContext(),uri);
-                if(bellRingtone==null){ setStatus("Bell sound is not available on this phone."); return; }
-                if(Build.VERSION.SDK_INT>=21){
-                    bellRingtone.setAudioAttributes(new AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build());
-                }else{
-                    bellRingtone.setStreamType(AudioManager.STREAM_ALARM);
-                }
-                bellRingtone.play();
-            }catch(Throwable e){
-                setStatus("Bell sound is unavailable; app remains running.");
+    void updateBellButton(){
+        runOnUiThread(()->{
+            if(bellBtn!=null){
+                bellBtn.setText(bellActive ? "🔕 STOP SCHOOL BELL" : "🔔 START SCHOOL BELL");
+                bellBtn.setBackgroundTintList(android.content.res.ColorStateList.valueOf(bellActive ? Color.rgb(170,45,45) : Color.rgb(170,105,25)));
             }
+        });
+    }
+
+    void startSchoolBellLocal(){
+        runOnUiThread(()->{
+            try{
+                if(bellActive)return;
+                android.net.Uri uri=RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
+                if(uri==null)uri=RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+                if(uri==null){setStatus("Bell sound is not available on this phone.");return;}
+                bellRingtone=RingtoneManager.getRingtone(getApplicationContext(),uri);
+                if(bellRingtone==null){setStatus("Bell sound is not available on this phone.");return;}
+                if(Build.VERSION.SDK_INT>=21){
+                    bellRingtone.setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build());
+                }else{bellRingtone.setStreamType(AudioManager.STREAM_ALARM);}
+                if(Build.VERSION.SDK_INT>=28)bellRingtone.setLooping(true);
+                bellActive=true;
+                bellRingtone.play();
+                if(Build.VERSION.SDK_INT<28)bellHandler.postDelayed(bellRepeat,2500);
+                updateBellButton();
+            }catch(Throwable e){bellActive=false;updateBellButton();setStatus("Bell sound could not play on this phone.");}
+        });
+    }
+
+    void stopSchoolBellLocal(){
+        runOnUiThread(()->{
+            bellActive=false;
+            bellHandler.removeCallbacks(bellRepeat);
+            try{if(bellRingtone!=null && bellRingtone.isPlaying())bellRingtone.stop();}catch(Throwable ignored){}
+            updateBellButton();
+            setStatus("🔕 School Bell stopped.");
         });
     }
 
@@ -470,6 +494,7 @@ public class MainActivity extends Activity {
     }
     void disconnectAll(){
         talking=false;connected=false;hosting=false;connecting=false;
+        stopSchoolBellLocal();
         try{if(serverSocket!=null)serverSocket.close();}catch(Exception ignored){}
         try{if(clientSocket!=null)clientSocket.close();}catch(Exception ignored){}
         for(Client c:clients)try{c.socket.close();}catch(Exception ignored){}clients.clear();
@@ -478,6 +503,7 @@ public class MainActivity extends Activity {
     }
     @Override public void onDestroy(){
         running=false;
+        bellActive=false;bellHandler.removeCallbacks(bellRepeat);
         try{if(bellRingtone!=null && bellRingtone.isPlaying())bellRingtone.stop();}catch(Exception ignored){}
         disconnectAll();
         try{if(btAdapter!=null&&btAdapter.isDiscovering())btAdapter.cancelDiscovery();}catch(Exception ignored){}
