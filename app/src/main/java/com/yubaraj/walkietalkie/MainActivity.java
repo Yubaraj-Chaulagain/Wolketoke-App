@@ -25,6 +25,9 @@ import android.media.AudioRecord;
 import android.media.AudioTrack;
 import android.media.MediaRecorder;
 import android.media.AudioManager;
+import android.media.AudioPlaybackCaptureConfiguration;
+import android.media.projection.MediaProjection;
+import android.media.projection.MediaProjectionManager;
 import android.media.Ringtone;
 import android.media.RingtoneManager;
 import android.media.AudioAttributes;
@@ -39,7 +42,7 @@ public class MainActivity extends Activity {
     static final int MAX_CLIENTS=9;
     static final int REQ_PERMS=77;
     TextView status, role, wifiLabel, btLabel;
-    Button hostBtn, rescanBtn, talkBtn, stopBtn, nameBtn, onlineBtn, bellBtn;
+    Button hostBtn, rescanBtn, talkBtn, stopBtn, nameBtn, onlineBtn, bellBtn, musicBtn;
     EditText nameInput;
     LinearLayout wifiList, btList;
     volatile boolean hosting=false, connected=false, talking=false, running=true, connecting=false;
@@ -50,6 +53,11 @@ public class MainActivity extends Activity {
     AudioTrack player;
     Ringtone bellRingtone;
     volatile boolean bellActive=false;
+    volatile boolean musicCaptureActive=false;
+    volatile boolean musicCaptureRequested=false;
+    MediaProjection mediaProjection;
+    AudioRecord musicCaptureRecord;
+    static final int REQ_MEDIA_CAPTURE=78;
     final Handler bellHandler=new Handler(android.os.Looper.getMainLooper());
     final Runnable bellRepeat= new Runnable(){ public void run(){ if(bellActive){ try{ if(bellRingtone!=null){ if(bellRingtone.isPlaying()) bellRingtone.stop(); bellRingtone.play(); } }catch(Throwable ignored){} bellHandler.postDelayed(this,2500); } } };
     WifiManager.MulticastLock multicastLock;
@@ -155,6 +163,10 @@ public class MainActivity extends Activity {
         hostBtn=button("START OFFLINE HOST");rescanBtn=button("SEARCH OFFLINE DEVICES");onlineBtn=button("🌐 ONLINE MODE (INTERNET)");bellBtn=button("🔔 SCHOOL BELL");talkBtn=button("HOLD TO TALK");stopBtn=button("DISCONNECT");
         root.addView(hostBtn,params());root.addView(rescanBtn,params());root.addView(onlineBtn,params());
         root.addView(bellBtn,params());
+        musicBtn=button("🎵 HOLD TO SHARE MUSIC PLAYER AUDIO");
+        musicBtn.setEnabled(false);
+        root.addView(musicBtn,params());
+        musicBtn.setOnClickListener(v -> toggleMusicCapture());
         bellBtn.setEnabled(false);
         bellBtn.setText("🔔 START SCHOOL BELL");
         bellBtn.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(170,105,25)));
@@ -235,7 +247,7 @@ public class MainActivity extends Activity {
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){requestNeededPermissions();setStatus("Allow microphone permission, then tap START HOST.");return;}
         if(hosting)return;
         hosting=true;connected=true;
-        runOnUiThread(()->{role.setText("HOST MODE • "+deviceName);talkBtn.setEnabled(true);bellBtn.setEnabled(true);hostBtn.setEnabled(false);});
+        runOnUiThread(()->{role.setText("HOST MODE • "+deviceName);talkBtn.setEnabled(true);bellBtn.setEnabled(true);musicBtn.setEnabled(true);hostBtn.setEnabled(false);});
         new Thread(()->{
             try{
                 serverSocket=new ServerSocket();serverSocket.setReuseAddress(true);serverSocket.bind(new InetSocketAddress(AUDIO_PORT));
@@ -380,7 +392,7 @@ public class MainActivity extends Activity {
             try{
                 Socket s=new Socket();s.connect(new InetSocketAddress(ip,AUDIO_PORT),5000);s.setTcpNoDelay(true);s.setKeepAlive(true);
                 clientSocket=s;clientOut=new DataOutputStream(new BufferedOutputStream(s.getOutputStream()));connected=true;connecting=false;
-                runOnUiThread(()->{role.setText("CONNECTED TO "+ip);talkBtn.setEnabled(true);bellBtn.setEnabled(true);hostBtn.setEnabled(false);});
+                runOnUiThread(()->{role.setText("CONNECTED TO "+ip);talkBtn.setEnabled(true);bellBtn.setEnabled(true);musicBtn.setEnabled(true);hostBtn.setEnabled(false);});
                 setStatus("Connected. Hold HOLD TO TALK to speak.");
                 readServer(s);
             }catch(Exception e){connected=false;connecting=false;setStatus("Connection failed. Confirm same hotspot and Host is running.");runOnUiThread(()->hostBtn.setEnabled(true));}
@@ -410,7 +422,7 @@ public class MainActivity extends Activity {
             while(connected&&!s.isClosed()){
                 int type=in.readUnsignedByte();int len=in.readInt();if(len<0||len>8192)break;byte[] data=new byte[len];in.readFully(data);if(type==1)play(data); else if(type==2)startSchoolBellLocal(); else if(type==3)stopSchoolBellLocal();
             }
-        }catch(Exception ignored){}finally{if(!hosting){connected=false;stopSchoolBellLocal();setStatus("Disconnected from host.");runOnUiThread(()->{talkBtn.setEnabled(false);bellBtn.setEnabled(false);hostBtn.setEnabled(true);});}}
+        }catch(Exception ignored){}finally{if(!hosting){connected=false;stopSchoolBellLocal();setStatus("Disconnected from host.");runOnUiThread(()->{talkBtn.setEnabled(false);bellBtn.setEnabled(false);musicBtn.setEnabled(false);hostBtn.setEnabled(true);});}}
     }
     void startTalking(){
         if(talking)return;
@@ -428,6 +440,61 @@ public class MainActivity extends Activity {
             finally{if(rec!=null){try{rec.stop();}catch(Exception ignored){}rec.release();}talking=false;}
         },"audio-capture").start();
     }
+    void toggleMusicCapture(){
+        if(musicCaptureActive){
+            musicCaptureActive=false;
+            try{if(musicCaptureRecord!=null){musicCaptureRecord.stop();musicCaptureRecord.release();}}catch(Exception ignored){}
+            musicCaptureRecord=null;
+            if(mediaProjection!=null){try{mediaProjection.stop();}catch(Exception ignored){} mediaProjection=null;}
+            runOnUiThread(()->musicBtn.setText("🎵 HOLD TO SHARE MUSIC PLAYER AUDIO"));
+            setStatus("Music sharing stopped.");
+            return;
+        }
+        if(!hosting&&!connected){setStatus("पहिले Host मा connect गर्नुहोस्।");return;}
+        if(Build.VERSION.SDK_INT<29){setStatus("Music audio sharing requires Android 10 or newer.");return;}
+        MediaProjectionManager mgr=(MediaProjectionManager)getSystemService(MEDIA_PROJECTION_SERVICE);
+        if(mgr==null){setStatus("This phone does not support audio capture.");return;}
+        musicCaptureRequested=true;
+        startActivityForResult(mgr.createScreenCaptureIntent(),REQ_MEDIA_CAPTURE);
+    }
+
+    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){
+        super.onActivityResult(requestCode,resultCode,data);
+        if(requestCode!=REQ_MEDIA_CAPTURE)return;
+        if(resultCode!=RESULT_OK||data==null){musicCaptureRequested=false;setStatus("Music sharing permission was not granted.");return;}
+        try{
+            MediaProjectionManager mgr=(MediaProjectionManager)getSystemService(MEDIA_PROJECTION_SERVICE);
+            mediaProjection=mgr.getMediaProjection(resultCode,data);
+            AudioPlaybackCaptureConfiguration config=new AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
+                    .addMatchingUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .addMatchingUsage(android.media.AudioAttributes.USAGE_GAME)
+                    .build();
+            AudioFormat format=new AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(SAMPLE_RATE).setChannelMask(AudioFormat.CHANNEL_IN_MONO).build();
+            int min=AudioRecord.getMinBufferSize(SAMPLE_RATE,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT);
+            musicCaptureRecord=new AudioRecord.Builder().setAudioFormat(format).setBufferSizeInBytes(Math.max(min,CHUNK*8))
+                    .setAudioPlaybackCaptureConfig(config).build();
+            musicCaptureActive=true;musicCaptureRequested=false;
+            musicBtn.setText("■ STOP SHARING MUSIC AUDIO");
+            setStatus("Music audio sharing started. Play music in your Music Player. Some apps may block capture.");
+            new Thread(()->{
+                byte[] buffer=new byte[CHUNK];
+                try{
+                    musicCaptureRecord.startRecording();
+                    while(musicCaptureActive){int n=musicCaptureRecord.read(buffer,0,buffer.length);
+                        if(n>0){byte[] packet=Arrays.copyOf(buffer,n);
+                            if(hosting){play(packet);for(Client c:clients)c.send(1,packet);}
+                            else if(connected&&clientOut!=null){synchronized(writeLock){clientOut.writeByte(1);clientOut.writeInt(n);clientOut.write(packet);clientOut.flush();}}
+                        }
+                    }
+                }catch(Exception e){setStatus("Music capture stopped: "+e.getMessage());}
+                finally{musicCaptureActive=false;try{if(musicCaptureRecord!=null){musicCaptureRecord.stop();musicCaptureRecord.release();}}catch(Exception ignored){}musicCaptureRecord=null;
+                    if(mediaProjection!=null){try{mediaProjection.stop();}catch(Exception ignored){}mediaProjection=null;}
+                    runOnUiThread(()->{if(musicBtn!=null)musicBtn.setText("🎵 HOLD TO SHARE MUSIC PLAYER AUDIO");});}
+            },"music-audio-capture").start();
+        }catch(Exception e){musicCaptureActive=false;musicCaptureRequested=false;setStatus("Could not start music capture: "+e.getMessage());}
+    }
+
     void toggleSchoolBell(){
         // Keep the button action safe even if Android reports a stale network/audio state.
         try {
@@ -462,7 +529,7 @@ public class MainActivity extends Activity {
             }catch(Exception e){
                 connected=false;
                 try{activeSocket.close();}catch(Exception ignored){}
-                runOnUiThread(()->{talkBtn.setEnabled(false);bellBtn.setEnabled(false);hostBtn.setEnabled(true);role.setText("DISCONNECTED — SEARCH HOST AGAIN");});
+                runOnUiThread(()->{talkBtn.setEnabled(false);bellBtn.setEnabled(false);musicBtn.setEnabled(false);hostBtn.setEnabled(true);role.setText("DISCONNECTED — SEARCH HOST AGAIN");});
                 setStatus("Host connection was lost. Tap SEARCH OFFLINE DEVICES to reconnect.");
             }
         }else{
@@ -523,7 +590,7 @@ public class MainActivity extends Activity {
         }catch(Exception ignored){}
     }
     void disconnectAll(){
-        talking=false;connected=false;hosting=false;connecting=false;
+        talking=false;musicCaptureActive=false;connected=false;hosting=false;connecting=false;
         stopSchoolBellLocal();
         try{if(serverSocket!=null)serverSocket.close();}catch(Exception ignored){}
         try{if(clientSocket!=null)clientSocket.close();}catch(Exception ignored){}
