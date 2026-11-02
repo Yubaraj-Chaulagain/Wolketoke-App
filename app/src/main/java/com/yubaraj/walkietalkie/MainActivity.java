@@ -446,6 +446,7 @@ public class MainActivity extends Activity {
             try{if(musicCaptureRecord!=null){musicCaptureRecord.stop();musicCaptureRecord.release();}}catch(Exception ignored){}
             musicCaptureRecord=null;
             if(mediaProjection!=null){try{mediaProjection.stop();}catch(Exception ignored){} mediaProjection=null;}
+            stopService(new Intent(this, MusicCaptureService.class));
             runOnUiThread(()->musicBtn.setText("🎵 HOLD TO SHARE MUSIC PLAYER AUDIO"));
             setStatus("Music sharing stopped.");
             return;
@@ -463,6 +464,9 @@ public class MainActivity extends Activity {
         if(requestCode!=REQ_MEDIA_CAPTURE)return;
         if(resultCode!=RESULT_OK||data==null){musicCaptureRequested=false;setStatus("Music sharing permission was not granted.");return;}
         try{
+            // Android requires an active mediaProjection foreground service before creating the projection.
+            Intent serviceIntent = new Intent(this, MusicCaptureService.class);
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(serviceIntent); else startService(serviceIntent);
             MediaProjectionManager mgr=(MediaProjectionManager)getSystemService(MEDIA_PROJECTION_SERVICE);
             mediaProjection=mgr.getMediaProjection(resultCode,data);
             AudioPlaybackCaptureConfiguration config=new AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
