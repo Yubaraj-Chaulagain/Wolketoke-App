@@ -42,10 +42,10 @@ public class MainActivity extends Activity {
     static final int MAX_CLIENTS=9;
     static final int REQ_PERMS=77;
     TextView status, role, wifiLabel, btLabel;
-    Button hostBtn, rescanBtn, talkBtn, stopBtn, nameBtn, onlineBtn, bellBtn, musicBtn;
+    Button hostBtn, rescanBtn, talkBtn, handsFreeBtn, stopBtn, nameBtn, onlineBtn, bellBtn, musicBtn;
     EditText nameInput;
     LinearLayout wifiList, btList;
-    volatile boolean hosting=false, connected=false, talking=false, running=true, connecting=false;
+    volatile boolean hosting=false, connected=false, talking=false, handsFree=false, running=true, connecting=false;
     ServerSocket serverSocket;
     final List<Client> clients=new CopyOnWriteArrayList<>();
     Socket clientSocket;
@@ -160,7 +160,7 @@ public class MainActivity extends Activity {
         nameInput=new EditText(this);nameInput.setSingleLine(true);nameInput.setText(deviceName);nameInput.setHint("Your display name");nameInput.setTextColor(Color.WHITE);nameInput.setHintTextColor(Color.LTGRAY);nameInput.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(117,209,255)));root.addView(nameInput,params());
         nameBtn=button("SAVE MY NAME");root.addView(nameBtn,params());
         role=new TextView(this);role.setText("Searching automatically…");role.setTextColor(Color.rgb(117,209,255));role.setTextSize(16);role.setGravity(Gravity.CENTER);root.addView(role,params());
-        hostBtn=button("START OFFLINE HOST");rescanBtn=button("SEARCH OFFLINE DEVICES");onlineBtn=button("🌐 ONLINE MODE (INTERNET)");bellBtn=button("🔔 SCHOOL BELL");talkBtn=button("HOLD TO TALK");stopBtn=button("DISCONNECT");
+        hostBtn=button("START OFFLINE HOST");rescanBtn=button("SEARCH OFFLINE DEVICES");onlineBtn=button("🌐 ONLINE MODE (INTERNET)");bellBtn=button("🔔 SCHOOL BELL");talkBtn=button("HOLD TO TALK");handsFreeBtn=button("🎙 HANDS-FREE: OFF");stopBtn=button("DISCONNECT");
         root.addView(hostBtn,params());root.addView(rescanBtn,params());root.addView(onlineBtn,params());
         root.addView(bellBtn,params());
         musicBtn=button("🎵 HOLD TO SHARE MUSIC PLAYER AUDIO");
@@ -178,12 +178,17 @@ public class MainActivity extends Activity {
         btList=new LinearLayout(this);btList.setOrientation(1);root.addView(btList,new LinearLayout.LayoutParams(-1,-2));
         talkBtn.setEnabled(false);talkBtn.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(43,62,88)));
         talkBtn.setOnTouchListener((v,e)->{
+            if(handsFree)return true;
             if(!connected&&!hosting){setStatus("पहिले एउटै Wi-Fi/Hotspot मा जोडिनुहोस् र Host खोज्नुहोस्।");return true;}
             if(e.getAction()==MotionEvent.ACTION_DOWN){startTalking();return true;}
             if(e.getAction()==MotionEvent.ACTION_UP||e.getAction()==MotionEvent.ACTION_CANCEL){stopTalking();return true;}
             return true;
         });
         LinearLayout.LayoutParams tp=new LinearLayout.LayoutParams(240,240);tp.gravity=Gravity.CENTER;tp.setMargins(0,12,0,12);root.addView(talkBtn,tp);
+        handsFreeBtn.setEnabled(false);
+        handsFreeBtn.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(25,105,85)));
+        handsFreeBtn.setOnClickListener(v -> toggleHandsFree());
+        root.addView(handsFreeBtn,params());
         root.addView(stopBtn,params());
         status=new TextView(this);status.setText("Offline mode stays available. Tap ONLINE MODE to talk over the internet.");status.setTextColor(Color.WHITE);status.setTextSize(14);status.setGravity(Gravity.CENTER);status.setPadding(0,14,0,0);root.addView(status,new LinearLayout.LayoutParams(-1,-2));
         scroll.addView(root);setContentView(scroll);
@@ -247,7 +252,7 @@ public class MainActivity extends Activity {
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){requestNeededPermissions();setStatus("Allow microphone permission, then tap START HOST.");return;}
         if(hosting)return;
         hosting=true;connected=true;
-        runOnUiThread(()->{role.setText("HOST MODE • "+deviceName);talkBtn.setEnabled(true);bellBtn.setEnabled(true);musicBtn.setEnabled(true);hostBtn.setEnabled(false);});
+        runOnUiThread(()->{role.setText("HOST MODE • "+deviceName);talkBtn.setEnabled(true);handsFreeBtn.setEnabled(true);bellBtn.setEnabled(true);musicBtn.setEnabled(true);hostBtn.setEnabled(false);});
         new Thread(()->{
             try{
                 serverSocket=new ServerSocket();serverSocket.setReuseAddress(true);serverSocket.bind(new InetSocketAddress(AUDIO_PORT));
@@ -392,7 +397,7 @@ public class MainActivity extends Activity {
             try{
                 Socket s=new Socket();s.connect(new InetSocketAddress(ip,AUDIO_PORT),5000);s.setTcpNoDelay(true);s.setKeepAlive(true);
                 clientSocket=s;clientOut=new DataOutputStream(new BufferedOutputStream(s.getOutputStream()));connected=true;connecting=false;
-                runOnUiThread(()->{role.setText("CONNECTED TO "+ip);talkBtn.setEnabled(true);bellBtn.setEnabled(true);musicBtn.setEnabled(true);hostBtn.setEnabled(false);});
+                runOnUiThread(()->{role.setText("CONNECTED TO "+ip);talkBtn.setEnabled(true);handsFreeBtn.setEnabled(true);bellBtn.setEnabled(true);musicBtn.setEnabled(true);hostBtn.setEnabled(false);});
                 setStatus("Connected. Hold HOLD TO TALK to speak.");
                 readServer(s);
             }catch(Exception e){connected=false;connecting=false;setStatus("Connection failed. Confirm same hotspot and Host is running.");runOnUiThread(()->hostBtn.setEnabled(true));}
@@ -422,7 +427,18 @@ public class MainActivity extends Activity {
             while(connected&&!s.isClosed()){
                 int type=in.readUnsignedByte();int len=in.readInt();if(len<0||len>8192)break;byte[] data=new byte[len];in.readFully(data);if(type==1)play(data); else if(type==2)startSchoolBellLocal(); else if(type==3)stopSchoolBellLocal();
             }
-        }catch(Exception ignored){}finally{if(!hosting){connected=false;stopSchoolBellLocal();setStatus("Disconnected from host.");runOnUiThread(()->{talkBtn.setEnabled(false);bellBtn.setEnabled(false);musicBtn.setEnabled(false);hostBtn.setEnabled(true);});}}
+        }catch(Exception ignored){}finally{if(!hosting){connected=false;handsFree=false;talking=false;stopService(new Intent(this, WalkieBackgroundService.class));stopSchoolBellLocal();setStatus("Disconnected from host.");runOnUiThread(()->{talkBtn.setEnabled(false);handsFreeBtn.setEnabled(false);handsFreeBtn.setText("🎙 HANDS-FREE: OFF");bellBtn.setEnabled(false);musicBtn.setEnabled(false);hostBtn.setEnabled(true);});}}
+    }
+    void toggleHandsFree(){
+        if(handsFree){handsFree=false;talking=false;stopService(new Intent(this, WalkieBackgroundService.class));handsFreeBtn.setText("🎙 HANDS-FREE: OFF");setStatus("Hands-free बन्द भयो। बोल्न HOLD TO TALK थिचिराख्नुहोस्।");return;}
+        if(!connected&&!hosting){setStatus("पहिले एउटै Wi-Fi/Hotspot मा जोडिनुहोस् र Host खोज्नुहोस्।");return;}
+        if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){requestNeededPermissions();setStatus("Hands-Free सुरु गर्न Microphone अनुमति दिनुहोस्।");return;}
+        handsFree=true;handsFreeBtn.setText("⏹ HANDS-FREE: ON (STOP)");
+        // Keep the microphone capture/network process alive while the display is off.
+        Intent bgIntent=new Intent(this, WalkieBackgroundService.class);
+        if(Build.VERSION.SDK_INT>=26)startForegroundService(bgIntent);else startService(bgIntent);
+        setStatus("Hands-free चालु छ — Display बन्द/फोन Lock हुँदा पनि चलिरहने गरी Background Service सक्रिय छ।");
+        startTalking();
     }
     void startTalking(){
         if(talking)return;
@@ -435,9 +451,37 @@ public class MainActivity extends Activity {
                 rec=new AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION,SAMPLE_RATE,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT,Math.max(min,CHUNK*4));
                 if(rec.getState()!=AudioRecord.STATE_INITIALIZED)throw new Exception("Microphone could not start");
                 rec.startRecording();byte[] b=new byte[CHUNK];
-                while(talking){int n=rec.read(b,0,b.length);if(n>0){byte[] packet=Arrays.copyOf(b,n);if(hosting){for(Client c:clients)c.send(1,packet);}else if(clientOut!=null){synchronized(writeLock){clientOut.writeByte(1);clientOut.writeInt(n);clientOut.write(packet);clientOut.flush();}}}}
+                // Hands-free voice activity detection: send speech only, plus a short
+                // hangover so the ends of words are not clipped. HOLD TO TALK stays raw.
+                long lastVoiceMs=0;
+                int voiceStartChunks=0;
+                while(talking){
+                    int n=rec.read(b,0,b.length);
+                    if(n>0){
+                        boolean sendAudio=true;
+                        if(handsFree){
+                            double sum=0;int samples=n/2;
+                            for(int i=0;i<samples;i++){
+                                int sample=(short)((b[i*2]&0xff)|((b[i*2+1]&0xff)<<8));
+                                sum+=(double)sample*sample;
+                            }
+                            double rms=samples>0?Math.sqrt(sum/samples):0;
+                            boolean voice=rms>=650.0;
+                            if(voice){voiceStartChunks++;lastVoiceMs=System.currentTimeMillis();}
+                            else voiceStartChunks=0;
+                            // Require two consecutive speech frames to reject clicks/noise;
+                            // retain 350 ms after speech to preserve word endings.
+                            sendAudio=(voiceStartChunks>=2)||(lastVoiceMs>0 && System.currentTimeMillis()-lastVoiceMs<=350);
+                        }
+                        if(sendAudio){
+                            byte[] packet=Arrays.copyOf(b,n);
+                            if(hosting){for(Client c:clients)c.send(1,packet);}
+                            else if(clientOut!=null){synchronized(writeLock){clientOut.writeByte(1);clientOut.writeInt(n);clientOut.write(packet);clientOut.flush();}}
+                        }
+                    }
+                }
             }catch(Exception e){setStatus("Microphone error: "+e.getMessage());}
-            finally{if(rec!=null){try{rec.stop();}catch(Exception ignored){}rec.release();}talking=false;}
+            finally{if(rec!=null){try{rec.stop();}catch(Exception ignored){}rec.release();}talking=false; if(handsFree && (connected||hosting) && running){try{Thread.sleep(300);}catch(InterruptedException ignored){} if(handsFree)startTalking();}}
         },"audio-capture").start();
     }
     void toggleMusicCapture(){
@@ -533,7 +577,7 @@ public class MainActivity extends Activity {
             }catch(Exception e){
                 connected=false;
                 try{activeSocket.close();}catch(Exception ignored){}
-                runOnUiThread(()->{talkBtn.setEnabled(false);bellBtn.setEnabled(false);musicBtn.setEnabled(false);hostBtn.setEnabled(true);role.setText("DISCONNECTED — SEARCH HOST AGAIN");});
+                runOnUiThread(()->{talkBtn.setEnabled(false);handsFreeBtn.setEnabled(false);handsFree=false;talking=false;handsFreeBtn.setText("🎙 HANDS-FREE: OFF");bellBtn.setEnabled(false);musicBtn.setEnabled(false);hostBtn.setEnabled(true);role.setText("DISCONNECTED — SEARCH HOST AGAIN");});
                 setStatus("Host connection was lost. Tap SEARCH OFFLINE DEVICES to reconnect.");
             }
         }else{
@@ -594,12 +638,13 @@ public class MainActivity extends Activity {
         }catch(Exception ignored){}
     }
     void disconnectAll(){
-        talking=false;musicCaptureActive=false;connected=false;hosting=false;connecting=false;
+        talking=false;handsFree=false;musicCaptureActive=false;connected=false;hosting=false;connecting=false;
+        stopService(new Intent(this, WalkieBackgroundService.class));
         stopSchoolBellLocal();
         try{if(serverSocket!=null)serverSocket.close();}catch(Exception ignored){}
         try{if(clientSocket!=null)clientSocket.close();}catch(Exception ignored){}
         for(Client c:clients)try{c.socket.close();}catch(Exception ignored){}clients.clear();
-        runOnUiThread(()->{talkBtn.setEnabled(false);bellBtn.setEnabled(false);role.setText("Searching…");hostBtn.setEnabled(true);});
+        runOnUiThread(()->{talkBtn.setEnabled(false);handsFreeBtn.setEnabled(false);handsFreeBtn.setText("🎙 HANDS-FREE: OFF");bellBtn.setEnabled(false);role.setText("Searching…");hostBtn.setEnabled(true);});
         setStatus("Disconnected. Auto search continues.");
     }
     @Override public void onDestroy(){
