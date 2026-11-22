@@ -27,45 +27,47 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
+
+      - name: Setup Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
 
       - name: Setup Android SDK
-        run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          ls -la "$ANDROID_HOME"
+        uses: android-actions/setup-android@v3
 
       - name: Accept Android SDK Licenses
         run: |
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          yes | sdkmanager --licenses || true
 
       - name: Install Android SDK Components
         run: |
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
+          sdkmanager "platform-tools"
+          sdkmanager "platforms;android-35"
+          sdkmanager "build-tools;35.0.0"
 
       - name: Check Project Files
         run: |
           echo "Checking project structure..."
           ls -la
-          test -f settings.gradle || test -f settings.gradle.kts
-          test -f gradlew
+
+          test -f settings.gradle
+          test -f build.gradle
+          test -f gradle.properties
           test -d app
 
-      - name: Grant Gradle Permission
-        run: chmod +x ./gradlew
+          echo "Project structure OK"
 
       - name: Clean Project
-        run: ./gradlew clean
+        run: gradle clean
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: gradle assembleDebug --stacktrace
 
       - name: Verify APK
         run: |
           find app/build/outputs/apk -name "*.apk" -type f
+
           test -n "$(find app/build/outputs/apk -name "*.apk" -type f)"
 
       - name: Upload Debug APK
@@ -79,8 +81,8 @@ jobs:
       - name: Build Summary
         if: success()
         run: |
-          echo "## Wolketoke APK Build Successful" >> $GITHUB_STEP_SUMMARY
-          echo "Wi-Fi and Bluetooth Relay source build completed." >> $GITHUB_STEP_SUMMARY
+          echo "## APK Build Successful" >> $GITHUB_STEP_SUMMARY
+          echo "Wolketoke APK successfully built." >> $GITHUB_STEP_SUMMARY
           echo "Download APK from Actions Artifacts." >> $GITHUB_STEP_SUMMARY
 
       - name: Build Failure Summary
