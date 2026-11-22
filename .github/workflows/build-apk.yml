@@ -1,4 +1,4 @@
-name: Build Wolketoke 50 Device Multi-Hop Relay APK
+name: Build Wolketoke 50 Device Multi-Hop Relay APK - Release
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build:
-    name: Build Android APK
+    name: Build Android Release APK
     runs-on: ubuntu-latest
 
     steps:
@@ -62,22 +62,22 @@ jobs:
       - name: Clean Project
         run: gradle clean
 
-      # 8. Build APK
-      - name: Build Debug APK
-        run: gradle assembleDebug --stacktrace
+      # 8. Build RELEASE APK
+      - name: Build Release APK
+        run: gradle assembleRelease --stacktrace
 
-      # 9. Verify APK
+      # 9. Verify RELEASE APK
       - name: Verify APK
         run: |
-          APK=$(find app/build/outputs/apk/debug \
+          APK=$(find app/build/outputs/apk/release \
             -name "*.apk" -type f | head -n 1)
 
           if [ -z "$APK" ]; then
-            echo "APK NOT FOUND"
+            echo "RELEASE APK NOT FOUND"
             exit 1
           fi
 
-          echo "APK successfully created: $APK"
+          echo "Release APK successfully created: $APK"
 
           mkdir -p release
           cp "$APK" release/Wolketoke-Relay.apk
@@ -90,16 +90,18 @@ jobs:
           path: release/Wolketoke-Relay.apk
           retention-days: 30
 
-      # 11. Create New Release
+      # 11. Create GitHub Release
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: apk-build-${{ github.run_number }}
-          name: Wolketoke Walkie-Talkie APK Build ${{ github.run_number }}
+          name: Wolketoke Walkie-Talkie APK Release ${{ github.run_number }}
           body: |
             Wolketoke Hybrid Multi-Hop Android APK
 
             Build Number: ${{ github.run_number }}
+            Version: 1.9
+            Version Code: 9
 
             Java: 17
             Gradle: 8.7
@@ -117,8 +119,10 @@ jobs:
         if: success()
         run: |
           echo "## APK BUILD SUCCESSFUL" >> $GITHUB_STEP_SUMMARY
-          echo "New GitHub Release created." >> $GITHUB_STEP_SUMMARY
+          echo "New RELEASE APK created." >> $GITHUB_STEP_SUMMARY
           echo "Build: ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "Version: 1.9" >> $GITHUB_STEP_SUMMARY
+          echo "Version Code: 9" >> $GITHUB_STEP_SUMMARY
 
       # 13. Failure Summary
       - name: Build Failure Summary
