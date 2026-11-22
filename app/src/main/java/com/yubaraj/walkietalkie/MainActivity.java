@@ -39,6 +39,7 @@ import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 public class MainActivity extends Activity {
+    static MainActivity instance;
     static final int DISCOVERY_PORT=45454, AUDIO_PORT=45455, SAMPLE_RATE=16000, CHUNK=640;
     // Relay-tree node capacity target: 1 local host/relay + up to 13 downstream peers.
     // Four relay nodes can therefore be arranged to serve a 50-user network target.
@@ -46,7 +47,7 @@ public class MainActivity extends Activity {
     static final int MAX_CLIENTS=13;
     static final int REQ_PERMS=77;
     TextView status, role, wifiLabel, btLabel;
-    Button hostBtn, rescanBtn, talkBtn, handsFreeBtn, stopBtn, nameBtn, onlineBtn, bellBtn, musicBtn, relayBtn;
+    Button hostBtn, rescanBtn, talkBtn, handsFreeBtn, stopBtn, nameBtn, onlineBtn, bellBtn, musicBtn, relayBtn, videoBtn;
     EditText relayHostInput, relayBluetoothInput;
     Button bluetoothRelayBtn;
     static final UUID RELAY_BT_UUID=UUID.fromString("8f3a2f20-7c1b-4d91-9d0b-7f2c4e6a1001");
@@ -75,6 +76,7 @@ public class MainActivity extends Activity {
     WifiManager.MulticastLock multicastLock;
     final Object writeLock=new Object();
     String hostAddress="";
+    volatile String connectedHostIp="";
     String deviceName="Walkie Phone";
     final Map<String,Peer> peers=Collections.synchronizedMap(new LinkedHashMap<>());
     final Map<String,String> bluetoothPeers=Collections.synchronizedMap(new LinkedHashMap<>());
@@ -118,6 +120,7 @@ public class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
+        instance=this;
         getWindow().setStatusBarColor(Color.rgb(5,18,35));
         getWindow().setNavigationBarColor(Color.rgb(5,18,35));
         showLogoSplash();
@@ -184,9 +187,12 @@ public class MainActivity extends Activity {
         relayBtn=button("📡 START WI-FI RELAY MODE");root.addView(relayBtn,params());root.addView(onlineBtn,params());
         root.addView(bellBtn,params());
         musicBtn=button("🎵 HOLD TO SHARE MUSIC PLAYER AUDIO");
+        videoBtn=button("📹 LOCAL VIDEO CALL (HOTSPOT/Wi-Fi)");
+        root.addView(videoBtn,params());
         musicBtn.setEnabled(false);
         root.addView(musicBtn,params());
         musicBtn.setOnClickListener(v -> toggleMusicCapture());
+        videoBtn.setOnClickListener(v -> startLocalVideoCall());
         bellBtn.setEnabled(false);
         bellBtn.setText("🔔 START SCHOOL BELL");
         bellBtn.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(170,105,25)));
@@ -279,7 +285,7 @@ public class MainActivity extends Activity {
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){requestNeededPermissions();setStatus("Allow microphone permission, then tap START HOST.");return;}
         if(hosting)return;
         hosting=true;connected=true;
-        runOnUiThread(()->{role.setText("HOST MODE • "+deviceName);talkBtn.setEnabled(true);handsFreeBtn.setEnabled(true);bellBtn.setEnabled(true);musicBtn.setEnabled(true);hostBtn.setEnabled(false);});
+        runOnUiThread(()->{role.setText("HOST MODE • "+deviceName);talkBtn.setEnabled(true);handsFreeBtn.setEnabled(true);bellBtn.setEnabled(true);musicBtn.setEnabled(true);videoBtn.setEnabled(true);hostBtn.setEnabled(false);});
         new Thread(()->{
             try{
                 serverSocket=new ServerSocket();serverSocket.setReuseAddress(true);serverSocket.bind(new InetSocketAddress(AUDIO_PORT));
@@ -501,8 +507,8 @@ public class MainActivity extends Activity {
         new Thread(()->{
             try{
                 Socket s=new Socket();s.connect(new InetSocketAddress(ip,AUDIO_PORT),5000);s.setTcpNoDelay(true);s.setKeepAlive(true);
-                clientSocket=s;clientOut=new DataOutputStream(new BufferedOutputStream(s.getOutputStream()));connected=true;connecting=false;
-                runOnUiThread(()->{role.setText("CONNECTED TO "+ip);talkBtn.setEnabled(true);handsFreeBtn.setEnabled(true);bellBtn.setEnabled(true);musicBtn.setEnabled(true);hostBtn.setEnabled(false);});
+                clientSocket=s;clientOut=new DataOutputStream(new BufferedOutputStream(s.getOutputStream()));connected=true;connecting=false;connectedHostIp=ip;
+                runOnUiThread(()->{role.setText("CONNECTED TO "+ip);talkBtn.setEnabled(true);handsFreeBtn.setEnabled(true);bellBtn.setEnabled(true);musicBtn.setEnabled(true);videoBtn.setEnabled(true);hostBtn.setEnabled(false);});
                 setStatus("Connected. Hold HOLD TO TALK to speak.");
                 readServer(s);
             }catch(Exception e){connected=false;connecting=false;setStatus("Connection failed. Confirm same hotspot and Host is running.");runOnUiThread(()->hostBtn.setEnabled(true));}
@@ -594,6 +600,22 @@ public class MainActivity extends Activity {
             finally{if(rec!=null){try{rec.stop();}catch(Exception ignored){}rec.release();}talking=false; if(handsFree && (connected||hosting) && running){try{Thread.sleep(300);}catch(InterruptedException ignored){} if(handsFree)startTalking();}}
         },"audio-capture").start();
     }
+    void startLocalVideoCall(){
+        if(!hosting && !connected){
+            setStatus("पहिले एउटै Wi-Fi/Hotspot मा Host सँग connect गर्नुहोस्।");
+            return;
+        }
+        if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED){
+            requestPermissions(new String[]{Manifest.permission.CAMERA}, 701);
+            setStatus("Video call का लागि Camera permission दिनुहोस्, त्यसपछि फेरि VIDEO CALL थिच्नुहोस्।");
+            return;
+        }
+        Intent i=new Intent(this, VideoCallActivity.class);
+        i.putExtra("host",hosting);
+        i.putExtra("hostIp",hosting ? getLocalIp() : connectedHostIp);
+        startActivity(i);
+    }
+
     void toggleMusicCapture(){
         if(musicCaptureActive){
             musicCaptureActive=false;
@@ -749,7 +771,7 @@ public class MainActivity extends Activity {
         }catch(Exception ignored){}
     }
     void disconnectAll(){
-        talking=false;handsFree=false;musicCaptureActive=false;connected=false;hosting=false;connecting=false;relayMode=false;
+        talking=false;handsFree=false;musicCaptureActive=false;connected=false;connectedHostIp="";hosting=false;connecting=false;relayMode=false;
         stopService(new Intent(this, WalkieBackgroundService.class));
         stopSchoolBellLocal();
         try{if(serverSocket!=null)serverSocket.close();}catch(Exception ignored){}
@@ -759,10 +781,11 @@ public class MainActivity extends Activity {
         bluetoothUpstreamOut=null;bluetoothUpstreamSocket=null;
         for(BluetoothClient c:bluetoothClients)try{c.socket.close();}catch(Exception ignored){}bluetoothClients.clear();
         for(Client c:clients)try{c.socket.close();}catch(Exception ignored){}clients.clear();
-        runOnUiThread(()->{talkBtn.setEnabled(false);handsFreeBtn.setEnabled(false);handsFreeBtn.setText("🎙 HANDS-FREE: OFF");bellBtn.setEnabled(false);role.setText("Searching…");hostBtn.setEnabled(true);if(relayBtn!=null)relayBtn.setEnabled(true);if(bluetoothRelayBtn!=null)bluetoothRelayBtn.setEnabled(true);});
+        runOnUiThread(()->{talkBtn.setEnabled(false);handsFreeBtn.setEnabled(false);handsFreeBtn.setText("🎙 HANDS-FREE: OFF");bellBtn.setEnabled(false);if(videoBtn!=null)videoBtn.setEnabled(false);role.setText("Searching…");hostBtn.setEnabled(true);if(relayBtn!=null)relayBtn.setEnabled(true);if(bluetoothRelayBtn!=null)bluetoothRelayBtn.setEnabled(true);});
         setStatus("Disconnected. Auto search continues.");
     }
     @Override public void onDestroy(){
+        if(instance==this) instance=null;
         running=false;
         bellActive=false;bellHandler.removeCallbacks(bellRepeat);
         try{if(bellRingtone!=null && bellRingtone.isPlaying())bellRingtone.stop();}catch(Exception ignored){}
