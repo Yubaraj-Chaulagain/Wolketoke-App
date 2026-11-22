@@ -1,138 +1,81 @@
-
-name: Build Wolketoke Hybrid Multi-Hop APK
+name: Build Wolketoke 50 Device Multi-Hop Relay APK
 
 on:
   workflow_dispatch:
-
   push:
     branches:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
-    name: Build, Verify and Release APK
+    name: Build Android APK
     runs-on: ubuntu-latest
 
-    env:
-      ANDROID_HOME: /usr/local/lib/android/sdk
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-
     steps:
-
-      # 1. Checkout Source
-      - name: Checkout Source
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 2. Setup Java 17
-      - name: Setup Java 17
+      - name: Setup JDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
-      # 3. Setup Gradle
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.7'
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
-      # 4. Configure Android SDK
-      - name: Configure Android SDK
+      - name: Accept Android SDK Licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Install Android SDK Components
         run: |
-          echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
-          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
-          echo "$ANDROID_HOME/build-tools/35.0.0" >> $GITHUB_PATH
+          sdkmanager "platform-tools"
+          sdkmanager "platforms;android-35"
+          sdkmanager "build-tools;35.0.0"
 
-          test -d "$ANDROID_HOME"
-          ls "$ANDROID_HOME"
-
-      # 5. Install Android SDK Packages
-      - name: Install Android SDK Packages
+      - name: Check Project Files
         run: |
-          sdkmanager --install \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
+          echo "Checking project structure..."
+          ls -la
+          test -f settings.gradle || test -f settings.gradle.kts
+          test -f gradlew
+          test -d app
 
-      # 6. Accept Licenses
-      - name: Accept Android Licenses
-        run: |
-          yes | sdkmanager --licenses || true
+      - name: Grant Gradle Permission
+        run: chmod +x ./gradlew
 
-      # 7. Validate Project
-      - name: Validate Project
-        run: |
-          test -f settings.gradle
-          test -f app/build.gradle
-          test -f app/src/main/AndroidManifest.xml
-          test -f app/src/main/java/com/yubaraj/walkietalkie/MainActivity.java
+      - name: Clean Project
+        run: ./gradlew clean
 
-      # 8. Build APK
       - name: Build Debug APK
-        run: |
-          gradle --no-daemon clean assembleDebug
+        run: ./gradlew assembleDebug --stacktrace
 
-      # 9. Verify APK
       - name: Verify APK
         run: |
-          APK="app/build/outputs/apk/debug/app-debug.apk"
+          find app/build/outputs/apk -name "*.apk" -type f
+          test -n "$(find app/build/outputs/apk -name "*.apk" -type f)"
 
-          if [ ! -s "$APK" ]; then
-            echo "APK not found!"
-            exit 1
-          fi
-
-          echo "APK BUILD SUCCESSFUL"
-
-          ls -lh "$APK"
-          sha256sum "$APK"
-
-      # 10. Upload APK Artifact
-      - name: Upload Debug APK Artifact
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: Wolketoke-Hybrid-MultiHop-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: Wolketoke-50-Device-Relay-Debug
+          path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
 
-      # 11. Create or Update GitHub Release
-      - name: Publish GitHub Release
-        if: github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: apk-build-${{ github.run_number }}
-          name: Wolketoke Walkie-Talkie APK Build ${{ github.run_number }}
+      - name: Build Summary
+        if: success()
+        run: |
+          echo "## Wolketoke APK Build Successful" >> $GITHUB_STEP_SUMMARY
+          echo "Wi-Fi and Bluetooth Relay source build completed." >> $GITHUB_STEP_SUMMARY
+          echo "Download APK from Actions Artifacts." >> $GITHUB_STEP_SUMMARY
 
-          body: |
-            Wolketoke Hybrid Multi-Hop Android APK
-
-            Build Number: ${{ github.run_number }}
-
-            Commit: ${{ github.sha }}
-
-            APK: app-debug.apk
-
-            Download and install on your Android device.
-
-          files: app/build/outputs/apk/debug/app-debug.apk
-          make_latest: true
-          fail_on_unmatched_files: true
-
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # 12. Upload Build Reports
-      - name: Upload Build Reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Wolketoke-Build-Reports
-          path: |
-            app/build/reports/
-            app/build/test-results/
-          if-no-files-found: ignore
-          retention-days: 7
+      - name: Build Failure Summary
+        if: failure()
+        run: |
+          echo "## APK Build Failed" >> $GITHUB_STEP_SUMMARY
+          echo "Please check the failed step in the Actions logs." >> $GITHUB_STEP_SUMMARY
