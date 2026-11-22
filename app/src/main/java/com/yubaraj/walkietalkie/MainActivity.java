@@ -332,7 +332,7 @@ public class MainActivity extends Activity {
     }
     void readBluetoothClient(BluetoothClient c){
         try(DataInputStream in=new DataInputStream(new BufferedInputStream(c.socket.getInputStream()))){
-            while(hosting&&!c.socket.isClosed()){
+            while(hosting&&c.socket.isConnected()){
                 int type=in.readUnsignedByte(),len=in.readInt();if(len<0||len>8192)break;byte[] data=new byte[len];in.readFully(data);
                 if(type==1){play(data);for(Client w:clients)w.send(type,data);for(BluetoothClient b:bluetoothClients)if(b!=c)b.send(type,data);if(relayMode)sendUpstream(type,data);}
                 else if(type==2||type==3){if(type==2)startSchoolBellLocal();else stopSchoolBellLocal();for(Client w:clients)w.send(type,new byte[]{1});for(BluetoothClient b:bluetoothClients)if(b!=c)b.send(type,new byte[]{1});if(relayMode)sendUpstream(type,new byte[]{1});}
@@ -358,7 +358,7 @@ public class MainActivity extends Activity {
     }
     void readBluetoothUpstream(BluetoothSocket socket){
         try(DataInputStream in=new DataInputStream(new BufferedInputStream(socket.getInputStream()))){
-            while(relayMode&&!socket.isClosed()){
+            while(relayMode&&socket.isConnected()){
                 int type=in.readUnsignedByte(),len=in.readInt();if(len<0||len>8192)break;byte[] data=new byte[len];in.readFully(data);
                 if(type==1){play(data);for(Client downstream:clients)downstream.send(type,data);for(BluetoothClient downstream:bluetoothClients)downstream.send(type,data);}
                 else if(type==2){startSchoolBellLocal();for(Client d:clients)d.send(type,new byte[]{1});for(BluetoothClient d:bluetoothClients)d.send(type,new byte[]{1});}
@@ -369,7 +369,7 @@ public class MainActivity extends Activity {
 
     void sendUpstream(int type,byte[] data){
         DataOutputStream out=bluetoothUpstreamOut!=null?bluetoothUpstreamOut:clientOut;Socket s=clientSocket;BluetoothSocket bs=bluetoothUpstreamSocket;
-        if(!relayMode||out==null||((s==null||s.isClosed())&&(bs==null||bs.isClosed())))return;
+        if(!relayMode||out==null||((s==null||s.isClosed())&&(bs==null||!bs.isConnected())))return;
         try{synchronized(writeLock){out.writeByte(type);out.writeInt(data.length);out.write(data);out.flush();}}
         catch(IOException e){setStatus("Relay upstream link lost.");}
     }
