@@ -29,16 +29,11 @@ android {
 
         release {
             minifyEnabled false
-
-            // Release APK signing
             signingConfig signingConfigs.debug
         }
     }
 }
 
 dependencies {
-
-    // Android WebKit
     implementation 'androidx.webkit:webkit:1.12.1'
-
 }
