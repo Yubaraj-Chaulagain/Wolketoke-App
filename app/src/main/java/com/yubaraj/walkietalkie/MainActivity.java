@@ -5,6 +5,8 @@ import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothManager;
+import android.bluetooth.BluetoothServerSocket;
+import android.bluetooth.BluetoothSocket;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -38,11 +40,21 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 public class MainActivity extends Activity {
     static final int DISCOVERY_PORT=45454, AUDIO_PORT=45455, SAMPLE_RATE=16000, CHUNK=640;
-    // Offline mode supports 10 phones total: 1 host + up to 9 connected clients.
-    static final int MAX_CLIENTS=9;
+    // Relay-tree node capacity target: 1 local host/relay + up to 13 downstream peers.
+    // Four relay nodes can therefore be arranged to serve a 50-user network target.
+    // This is a per-node admission limit, NOT a guarantee of 50 simultaneous audio streams.
+    static final int MAX_CLIENTS=13;
     static final int REQ_PERMS=77;
     TextView status, role, wifiLabel, btLabel;
-    Button hostBtn, rescanBtn, talkBtn, handsFreeBtn, stopBtn, nameBtn, onlineBtn, bellBtn, musicBtn;
+    Button hostBtn, rescanBtn, talkBtn, handsFreeBtn, stopBtn, nameBtn, onlineBtn, bellBtn, musicBtn, relayBtn;
+    EditText relayHostInput, relayBluetoothInput;
+    Button bluetoothRelayBtn;
+    static final UUID RELAY_BT_UUID=UUID.fromString("8f3a2f20-7c1b-4d91-9d0b-7f2c4e6a1001");
+    BluetoothServerSocket bluetoothServerSocket;
+    BluetoothSocket bluetoothUpstreamSocket;
+    DataOutputStream bluetoothUpstreamOut;
+    final List<BluetoothClient> bluetoothClients=new CopyOnWriteArrayList<>();
+    volatile boolean relayMode=false;
     EditText nameInput;
     LinearLayout wifiList, btList;
     volatile boolean hosting=false, connected=false, talking=false, handsFree=false, running=true, connecting=false;
@@ -90,6 +102,12 @@ public class MainActivity extends Activity {
                 try { socket.close(); } catch (IOException ignored2) {}
             }
         }
+    }
+
+    static class BluetoothClient {
+        final BluetoothSocket socket; final DataOutputStream out; final Object lock=new Object();
+        BluetoothClient(BluetoothSocket s) throws IOException { socket=s; out=new DataOutputStream(new BufferedOutputStream(s.getOutputStream())); }
+        void send(int type,byte[] data){try{synchronized(lock){out.writeByte(type);out.writeInt(data.length);out.write(data);out.flush();}}catch(IOException e){try{socket.close();}catch(Exception ignored){}}}
     }
 
     static class Peer {
@@ -161,7 +179,9 @@ public class MainActivity extends Activity {
         nameBtn=button("SAVE MY NAME");root.addView(nameBtn,params());
         role=new TextView(this);role.setText("Searching automatically…");role.setTextColor(Color.rgb(117,209,255));role.setTextSize(16);role.setGravity(Gravity.CENTER);root.addView(role,params());
         hostBtn=button("START OFFLINE HOST");rescanBtn=button("SEARCH OFFLINE DEVICES");onlineBtn=button("🌐 ONLINE MODE (INTERNET)");bellBtn=button("🔔 SCHOOL BELL");talkBtn=button("HOLD TO TALK");handsFreeBtn=button("🎙 HANDS-FREE: OFF");stopBtn=button("DISCONNECT");
-        root.addView(hostBtn,params());root.addView(rescanBtn,params());root.addView(onlineBtn,params());
+        root.addView(hostBtn,params());root.addView(rescanBtn,params());
+        relayHostInput=new EditText(this);relayHostInput.setSingleLine(true);relayHostInput.setHint("Main Host IP (e.g. 192.168.43.1)");relayHostInput.setInputType(android.text.InputType.TYPE_CLASS_PHONE);relayHostInput.setTextColor(Color.WHITE);relayHostInput.setHintTextColor(Color.LTGRAY);relayHostInput.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.rgb(117,209,255)));root.addView(relayHostInput,params());
+        relayBtn=button("📡 START WI-FI RELAY MODE");root.addView(relayBtn,params());root.addView(onlineBtn,params());
         root.addView(bellBtn,params());
         musicBtn=button("🎵 HOLD TO SHARE MUSIC PLAYER AUDIO");
         musicBtn.setEnabled(false);
@@ -193,6 +213,8 @@ public class MainActivity extends Activity {
         status=new TextView(this);status.setText("Offline mode stays available. Tap ONLINE MODE to talk over the internet.");status.setTextColor(Color.WHITE);status.setTextSize(14);status.setGravity(Gravity.CENTER);status.setPadding(0,14,0,0);root.addView(status,new LinearLayout.LayoutParams(-1,-2));
         scroll.addView(root);setContentView(scroll);
         hostBtn.setOnClickListener(v->startHost());
+        relayBtn.setOnClickListener(v->{String ip=relayHostInput.getText().toString().trim();if(ip.isEmpty()){setStatus("Relay सुरु गर्न Main Host को IP लेख्नुहोस्।");return;}startRelay(ip);});
+        bluetoothRelayBtn.setOnClickListener(v->{String mac=relayBluetoothInput.getText().toString().trim();if(mac.isEmpty()){setStatus("पहिले Main Host को Bluetooth MAC address राख्नुहोस् र दुवै फोन Pair गर्नुहोस्।");return;}startBluetoothRelay(mac);});
         rescanBtn.setOnClickListener(v->{renderLists();startBluetoothScan();setStatus("Searching again…");});
         stopBtn.setOnClickListener(v->disconnectAll());
         nameBtn.setOnClickListener(v->{String n=nameInput.getText().toString().trim();if(n.isEmpty()){setStatus("Please enter a name.");return;}deviceName=n;getPreferences(0).edit().putString("deviceName",n).apply();setStatus("Name saved: "+deviceName);if(hosting)setStatus("Name saved. Restart HOST so others see the updated name.");});
@@ -260,20 +282,98 @@ public class MainActivity extends Activity {
                 while(hosting){
                     Socket s=serverSocket.accept();
                     s.setTcpNoDelay(true);
-                    if(clients.size()>=MAX_CLIENTS){
+                    if(clients.size()+bluetoothClients.size()>=MAX_CLIENTS){
                         try{s.close();}catch(IOException ignored){}
-                        setStatus("Offline limit reached: 10 phones total (including host). Disconnect a phone to allow another.");
+                        setStatus("This node is full: maximum 13 downstream peers (14 including this host/relay).");
                         continue;
                     }
                     Client c=new Client(s);
                     clients.add(c);
-                    setStatus("Offline connected: "+(clients.size()+1)+"/10 phones (host included)");
+                    setStatus("Node connected: "+(clients.size()+1)+"/14 devices (host/relay included)");
                     new Thread(()->readClient(c)).start();
                 }
             }catch(Exception e){if(hosting)setStatus("Host error: "+e.getMessage());}
         },"host-server").start();
         new Thread(this::sendBeacon,"host-beacon").start();
+        startBluetoothHostServer();
     }
+    /** Start a Wi-Fi store-and-forward relay: this phone accepts downstream clients
+     * like a Host while maintaining one upstream connection to the Main Host. */
+    void startRelay(String upstreamIp){
+        if(hosting||connected||connecting){setStatus("पहिले Disconnect गर्नुहोस्, त्यसपछि Relay सुरु गर्नुहोस्।");return;}
+        if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){requestNeededPermissions();setStatus("Relay का लागि Microphone अनुमति दिनुहोस्।");return;}
+        relayMode=true;
+        startHost();
+        runOnUiThread(()->{relayBtn.setEnabled(false);hostBtn.setEnabled(false);role.setText("RELAY MODE • UPSTREAM: "+upstreamIp);});
+        new Thread(()->{
+            try{
+                // Wait until the local downstream listener is actually bound.
+                long deadline=System.currentTimeMillis()+6000;
+                while((serverSocket==null||!serverSocket.isBound())&&System.currentTimeMillis()<deadline)Thread.sleep(100);
+                if(serverSocket==null||!serverSocket.isBound())throw new IOException("Local relay listener did not start");
+                Socket upstream=new Socket();upstream.connect(new InetSocketAddress(upstreamIp,AUDIO_PORT),7000);upstream.setTcpNoDelay(true);upstream.setKeepAlive(true);
+                clientSocket=upstream;clientOut=new DataOutputStream(new BufferedOutputStream(upstream.getOutputStream()));
+                setStatus("Relay connected to Main Host. Other phones can connect to this phone's hotspot/IP.");
+                readServer(upstream);
+            }catch(Exception e){relayMode=false;setStatus("Relay upstream connect failed: "+(e.getMessage()==null?"check Host IP and same Wi-Fi":e.getMessage()));disconnectAll();}
+        },"relay-upstream").start();
+    }
+
+    /** Bluetooth Classic server: paired phones may connect as audio peers. */
+    void startBluetoothHostServer(){
+        if(btAdapter==null)return;
+        new Thread(()->{
+            try{
+                if(Build.VERSION.SDK_INT>=31 && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)!=PackageManager.PERMISSION_GRANTED){setStatus("Bluetooth Connect permission दिनुहोस्।");return;}
+                bluetoothServerSocket=btAdapter.listenUsingRfcommWithServiceRecord("Wolketoke Relay",RELAY_BT_UUID);
+                while(hosting){BluetoothSocket socket=bluetoothServerSocket.accept();if(clients.size()+bluetoothClients.size()>=MAX_CLIENTS){try{socket.close();}catch(Exception ignored){}continue;}BluetoothClient c=new BluetoothClient(socket);bluetoothClients.add(c);setStatus("Bluetooth peer connected. Total peers: "+(clients.size()+bluetoothClients.size()));new Thread(()->readBluetoothClient(c),"bt-peer-reader").start();}
+            }catch(Exception e){if(hosting)setStatus("Bluetooth listener: "+e.getMessage());}
+        },"bluetooth-host-server").start();
+    }
+    void readBluetoothClient(BluetoothClient c){
+        try(DataInputStream in=new DataInputStream(new BufferedInputStream(c.socket.getInputStream()))){
+            while(hosting&&!c.socket.isClosed()){
+                int type=in.readUnsignedByte(),len=in.readInt();if(len<0||len>8192)break;byte[] data=new byte[len];in.readFully(data);
+                if(type==1){play(data);for(Client w:clients)w.send(type,data);for(BluetoothClient b:bluetoothClients)if(b!=c)b.send(type,data);if(relayMode)sendUpstream(type,data);}
+                else if(type==2||type==3){if(type==2)startSchoolBellLocal();else stopSchoolBellLocal();for(Client w:clients)w.send(type,new byte[]{1});for(BluetoothClient b:bluetoothClients)if(b!=c)b.send(type,new byte[]{1});if(relayMode)sendUpstream(type,new byte[]{1});}
+            }
+        }catch(Exception ignored){}finally{bluetoothClients.remove(c);try{c.socket.close();}catch(Exception ignored){}}
+    }
+    /** Start a relay with Bluetooth Classic as the upstream link and Wi-Fi clients downstream. */
+    void startBluetoothRelay(String mac){
+        if(btAdapter==null){setStatus("यो मोबाइलमा Bluetooth उपलब्ध छैन।");return;}
+        if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){requestNeededPermissions();setStatus("पहिले Microphone permission दिनुहोस्।");return;}
+        if(hosting||connected||connecting){setStatus("पहिले Disconnect गर्नुहोस्, त्यसपछि Relay सुरु गर्नुहोस्।");return;}
+        if(Build.VERSION.SDK_INT>=31&&checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)!=PackageManager.PERMISSION_GRANTED){requestNeededPermissions();setStatus("Bluetooth Connect permission चाहिन्छ।");return;}
+        try{BluetoothDevice device=btAdapter.getRemoteDevice(mac);if(device.getBondState()!=BluetoothDevice.BOND_BONDED){setStatus("पहिले Android Bluetooth Settings मा Main Host सँग Pair गर्नुहोस्।");return;} }catch(Exception e){setStatus("Bluetooth MAC address गलत छ वा Device Pair भएको छैन।");return;}
+        relayMode=true;startHost();runOnUiThread(()->{bluetoothRelayBtn.setEnabled(false);relayBtn.setEnabled(false);hostBtn.setEnabled(false);role.setText("BLUETOOTH RELAY • "+mac);});
+        new Thread(()->{
+            try{
+                long deadline=System.currentTimeMillis()+7000;while((bluetoothServerSocket==null)&&System.currentTimeMillis()<deadline)Thread.sleep(100);
+                BluetoothDevice device=btAdapter.getRemoteDevice(mac);if(btAdapter.isDiscovering())btAdapter.cancelDiscovery();
+                BluetoothSocket socket=device.createRfcommSocketToServiceRecord(RELAY_BT_UUID);socket.connect();bluetoothUpstreamSocket=socket;bluetoothUpstreamOut=new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
+                setStatus("Bluetooth upstream connected. Downstream phones can join this relay over Wi-Fi/Hotspot.");readBluetoothUpstream(socket);
+            }catch(Exception e){setStatus("Bluetooth Relay connect failed: "+(e.getMessage()==null?"Pair both phones and retry":e.getMessage()));disconnectAll();}
+        },"bluetooth-relay-upstream").start();
+    }
+    void readBluetoothUpstream(BluetoothSocket socket){
+        try(DataInputStream in=new DataInputStream(new BufferedInputStream(socket.getInputStream()))){
+            while(relayMode&&!socket.isClosed()){
+                int type=in.readUnsignedByte(),len=in.readInt();if(len<0||len>8192)break;byte[] data=new byte[len];in.readFully(data);
+                if(type==1){play(data);for(Client downstream:clients)downstream.send(type,data);for(BluetoothClient downstream:bluetoothClients)downstream.send(type,data);}
+                else if(type==2){startSchoolBellLocal();for(Client d:clients)d.send(type,new byte[]{1});for(BluetoothClient d:bluetoothClients)d.send(type,new byte[]{1});}
+                else if(type==3){stopSchoolBellLocal();for(Client d:clients)d.send(type,new byte[]{1});for(BluetoothClient d:bluetoothClients)d.send(type,new byte[]{1});}
+            }
+        }catch(Exception ignored){}finally{if(relayMode){setStatus("Bluetooth upstream disconnected.");disconnectAll();}}
+    }
+
+    void sendUpstream(int type,byte[] data){
+        DataOutputStream out=bluetoothUpstreamOut!=null?bluetoothUpstreamOut:clientOut;Socket s=clientSocket;BluetoothSocket bs=bluetoothUpstreamSocket;
+        if(!relayMode||out==null||((s==null||s.isClosed())&&(bs==null||bs.isClosed())))return;
+        try{synchronized(writeLock){out.writeByte(type);out.writeInt(data.length);out.write(data);out.flush();}}
+        catch(IOException e){setStatus("Relay upstream link lost.");}
+    }
+
     void startPresenceBeacon(){
         new Thread(()->{
             try(DatagramSocket ds=new DatagramSocket()){
@@ -407,27 +507,32 @@ public class MainActivity extends Activity {
         try(DataInputStream in=new DataInputStream(new BufferedInputStream(c.socket.getInputStream()))){
             while(hosting&&!c.socket.isClosed()){
                 int type=in.readUnsignedByte();int len=in.readInt();if(len<0||len>8192)break;byte[] data=new byte[len];in.readFully(data);
-                if(type==1){play(data);for(Client other:clients)if(other!=c)other.send(type,data);}
+                if(type==1){play(data);for(Client other:clients)if(other!=c)other.send(type,data);for(BluetoothClient other:bluetoothClients)other.send(type,data);if(relayMode)sendUpstream(type,data);}
                 else if(type==2){
                     // The host is authoritative: start locally and broadcast to EVERY client,
                     // including the phone that requested the bell, so all devices stay in sync.
                     startSchoolBellLocal();
-                    for(Client other:clients)other.send(2,new byte[]{1});
+                    for(Client other:clients)other.send(2,new byte[]{1});for(BluetoothClient other:bluetoothClients)other.send(2,new byte[]{1});
+                    if(relayMode)sendUpstream(2,new byte[]{1});
                 }
                 else if(type==3){
                     // Stop the bell on the host and every connected phone with one command.
                     stopSchoolBellLocal();
-                    for(Client other:clients)other.send(3,new byte[]{1});
+                    for(Client other:clients)other.send(3,new byte[]{1});for(BluetoothClient other:bluetoothClients)other.send(3,new byte[]{1});
+                    if(relayMode)sendUpstream(3,new byte[]{1});
                 }
             }
-        }catch(Exception ignored){}finally{clients.remove(c);try{c.socket.close();}catch(Exception ignored){}if(hosting)setStatus("Offline connected: "+(clients.size()+1)+"/10 phones (host included)");}
+        }catch(Exception ignored){}finally{clients.remove(c);try{c.socket.close();}catch(Exception ignored){}if(hosting)setStatus("Node connected: "+(clients.size()+1)+"/14 devices (host/relay included)");}
     }
     void readServer(Socket s){
         try(DataInputStream in=new DataInputStream(new BufferedInputStream(s.getInputStream()))){
             while(connected&&!s.isClosed()){
-                int type=in.readUnsignedByte();int len=in.readInt();if(len<0||len>8192)break;byte[] data=new byte[len];in.readFully(data);if(type==1)play(data); else if(type==2)startSchoolBellLocal(); else if(type==3)stopSchoolBellLocal();
+                int type=in.readUnsignedByte();int len=in.readInt();if(len<0||len>8192)break;byte[] data=new byte[len];in.readFully(data);if(type==1){play(data);if(relayMode){for(Client downstream:clients)downstream.send(type,data);for(BluetoothClient downstream:bluetoothClients)downstream.send(type,data);}} else if(type==2){startSchoolBellLocal();if(relayMode){for(Client downstream:clients)downstream.send(type,data);for(BluetoothClient downstream:bluetoothClients)downstream.send(type,data);}} else if(type==3){stopSchoolBellLocal();if(relayMode){for(Client downstream:clients)downstream.send(type,data);for(BluetoothClient downstream:bluetoothClients)downstream.send(type,data);}}
             }
-        }catch(Exception ignored){}finally{if(!hosting){connected=false;handsFree=false;talking=false;stopService(new Intent(this, WalkieBackgroundService.class));stopSchoolBellLocal();setStatus("Disconnected from host.");runOnUiThread(()->{talkBtn.setEnabled(false);handsFreeBtn.setEnabled(false);handsFreeBtn.setText("🎙 HANDS-FREE: OFF");bellBtn.setEnabled(false);musicBtn.setEnabled(false);hostBtn.setEnabled(true);});}}
+        }catch(Exception ignored){}finally{
+            if(relayMode){setStatus("Relay upstream disconnected. Closing relay links.");disconnectAll();}
+            else if(!hosting){connected=false;handsFree=false;talking=false;stopService(new Intent(this, WalkieBackgroundService.class));stopSchoolBellLocal();setStatus("Disconnected from host.");runOnUiThread(()->{talkBtn.setEnabled(false);handsFreeBtn.setEnabled(false);handsFreeBtn.setText("🎙 HANDS-FREE: OFF");bellBtn.setEnabled(false);musicBtn.setEnabled(false);hostBtn.setEnabled(true);});}
+        }
     }
     void toggleHandsFree(){
         if(handsFree){handsFree=false;talking=false;stopService(new Intent(this, WalkieBackgroundService.class));handsFreeBtn.setText("🎙 HANDS-FREE: OFF");setStatus("Hands-free बन्द भयो। बोल्न HOLD TO TALK थिचिराख्नुहोस्।");return;}
@@ -475,7 +580,7 @@ public class MainActivity extends Activity {
                         }
                         if(sendAudio){
                             byte[] packet=Arrays.copyOf(b,n);
-                            if(hosting){for(Client c:clients)c.send(1,packet);}
+                            if(hosting){for(Client c:clients)c.send(1,packet);for(BluetoothClient c:bluetoothClients)c.send(1,packet);if(relayMode)sendUpstream(1,packet);}
                             else if(clientOut!=null){synchronized(writeLock){clientOut.writeByte(1);clientOut.writeInt(n);clientOut.write(packet);clientOut.flush();}}
                         }
                     }
@@ -531,7 +636,7 @@ public class MainActivity extends Activity {
                     musicCaptureRecord.startRecording();
                     while(musicCaptureActive){int n=musicCaptureRecord.read(buffer,0,buffer.length);
                         if(n>0){byte[] packet=Arrays.copyOf(buffer,n);
-                            if(hosting){play(packet);for(Client c:clients)c.send(1,packet);}
+                            if(hosting){play(packet);for(Client c:clients)c.send(1,packet);for(BluetoothClient c:bluetoothClients)c.send(1,packet);if(relayMode)sendUpstream(1,packet);}
                             else if(connected&&clientOut!=null){synchronized(writeLock){clientOut.writeByte(1);clientOut.writeInt(n);clientOut.write(packet);clientOut.flush();}}
                         }
                     }
@@ -557,7 +662,8 @@ public class MainActivity extends Activity {
         if(hosting){
             // Host starts/stops its own bell, then broadcasts the same state to all clients.
             if(command==2) startSchoolBellLocal(); else stopSchoolBellLocal();
-            for(Client c:clients)c.send(command,data);
+            for(Client c:clients)c.send(command,data);for(BluetoothClient c:bluetoothClients)c.send(command,data);
+            if(relayMode)sendUpstream(command,data);
             setStatus(command==2 ? "🔔 School Bell started on this phone and all connected phones." : "🔕 School Bell stopped on all connected phones.");
             return;
         }
@@ -638,13 +744,17 @@ public class MainActivity extends Activity {
         }catch(Exception ignored){}
     }
     void disconnectAll(){
-        talking=false;handsFree=false;musicCaptureActive=false;connected=false;hosting=false;connecting=false;
+        talking=false;handsFree=false;musicCaptureActive=false;connected=false;hosting=false;connecting=false;relayMode=false;
         stopService(new Intent(this, WalkieBackgroundService.class));
         stopSchoolBellLocal();
         try{if(serverSocket!=null)serverSocket.close();}catch(Exception ignored){}
         try{if(clientSocket!=null)clientSocket.close();}catch(Exception ignored){}
+        try{if(bluetoothUpstreamSocket!=null)bluetoothUpstreamSocket.close();}catch(Exception ignored){}
+        try{if(bluetoothServerSocket!=null)bluetoothServerSocket.close();}catch(Exception ignored){}
+        bluetoothUpstreamOut=null;bluetoothUpstreamSocket=null;
+        for(BluetoothClient c:bluetoothClients)try{c.socket.close();}catch(Exception ignored){}bluetoothClients.clear();
         for(Client c:clients)try{c.socket.close();}catch(Exception ignored){}clients.clear();
-        runOnUiThread(()->{talkBtn.setEnabled(false);handsFreeBtn.setEnabled(false);handsFreeBtn.setText("🎙 HANDS-FREE: OFF");bellBtn.setEnabled(false);role.setText("Searching…");hostBtn.setEnabled(true);});
+        runOnUiThread(()->{talkBtn.setEnabled(false);handsFreeBtn.setEnabled(false);handsFreeBtn.setText("🎙 HANDS-FREE: OFF");bellBtn.setEnabled(false);role.setText("Searching…");hostBtn.setEnabled(true);if(relayBtn!=null)relayBtn.setEnabled(true);if(bluetoothRelayBtn!=null)bluetoothRelayBtn.setEnabled(true);});
         setStatus("Disconnected. Auto search continues.");
     }
     @Override public void onDestroy(){
