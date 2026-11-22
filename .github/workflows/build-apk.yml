@@ -28,27 +28,41 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Gradle 8.7
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Accept Android SDK Licenses
+      - name: Check Android SDK
         run: |
-          yes | sdkmanager --licenses || true
+          echo "Checking Android SDK..."
+          ls -la "$ANDROID_HOME"
 
-      - name: Install Android SDK Components
+          echo "Available platforms:"
+          ls "$ANDROID_HOME/platforms" || true
+
+          echo "Available build tools:"
+          ls "$ANDROID_HOME/build-tools" || true
+
+      - name: Install Required SDK Components
         run: |
-          sdkmanager "platform-tools"
-          sdkmanager "platforms;android-35"
-          sdkmanager "build-tools;35.0.0"
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n 1)
+
+          echo "Using SDK Manager: $SDKMANAGER"
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "SDK Manager not found"
+            exit 1
+          fi
+
+          yes | "$SDKMANAGER" --licenses || true
+
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0" "platform-tools"
 
       - name: Check Project Files
         run: |
           echo "Checking project structure..."
+
           ls -la
 
           test -f settings.gradle
@@ -66,11 +80,16 @@ jobs:
 
       - name: Verify APK
         run: |
-          find app/build/outputs/apk -name "*.apk" -type f
+          APK=$(find app/build/outputs/apk -name "*.apk" -type f | head -n 1)
 
-          test -n "$(find app/build/outputs/apk -name "*.apk" -type f)"
+          if [ -z "$APK" ]; then
+            echo "APK not found"
+            exit 1
+          fi
 
-      - name: Upload Debug APK
+          echo "APK found: $APK"
+
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Wolketoke-50-Device-Relay-Debug
@@ -83,10 +102,9 @@ jobs:
         run: |
           echo "## APK Build Successful" >> $GITHUB_STEP_SUMMARY
           echo "Wolketoke APK successfully built." >> $GITHUB_STEP_SUMMARY
-          echo "Download APK from Actions Artifacts." >> $GITHUB_STEP_SUMMARY
 
       - name: Build Failure Summary
         if: failure()
         run: |
           echo "## APK Build Failed" >> $GITHUB_STEP_SUMMARY
-          echo "Please check the failed step in the Actions logs." >> $GITHUB_STEP_SUMMARY
+          echo "Check the failed step in Actions logs." >> $GITHUB_STEP_SUMMARY
