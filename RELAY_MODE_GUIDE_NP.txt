@@ -1,0 +1,29 @@
+WOLKETOKE MULTI-HOP RELAY TREE — BETA SOURCE
+
+लक्ष्य संरचना: ४ वटा Relay मोबाइल + तिनीहरूबाहेक ५० वटा user मोबाइल (कुल लक्ष्य ५४)।
+यो ZIP मा प्रत्येक Host/Relay node ले बढीमा १३ downstream peer स्वीकार्ने गरी सीमा राखिएको छ। चारवटा relay node मा user फोनहरू बाँडेर राख्दा ५० user-device लक्ष्यको topology बनाउन सकिन्छ। यो क्षमता लक्ष्य हो; ५० वटा फोनमा एकैचोटि स्पष्ट audio चल्छ भन्ने load/device test बिना ग्यारेन्टी होइन।
+
+CHAIN SETUP (उदाहरण)
+Main Host → Relay 1 → Relay 2 → Relay 3 → Relay 4 → अन्तिम user फोनहरू
+
+प्रत्येक Relay मा: upstream बाट audio प्राप्त हुन्छ, local downstream Wi-Fi/Bluetooth peers लाई पठाइन्छ, downstream बाट आएको audio upstream तर्फ पठाइन्छ। प्रत्येक node मा १३ downstream peer सम्मको limit छ। Upstream relay पनि अघिल्लो node को downstream peer count मा गनिन्छ। त्यसैले ५० user फोनका लागि चार node मा peer संख्या सन्तुलित राख्नुहोस् र अनावश्यक direct peer नथप्नुहोस्।
+
+WIFI RELAY
+1. Main Host मा START OFFLINE HOST थिच्नुहोस्।
+2. Relay 1 लाई Host को Wi-Fi/Hotspot मा जोड्नुहोस्। Relay 1 मा Host IP राखेर START WI-FI RELAY MODE थिच्नुहोस्।
+3. Relay 2 लाई Relay 1 को downstream Wi-Fi/Hotspot मा जोड्नुहोस् र Relay 1 को IP राखेर Relay Mode सुरु गर्नुहोस्। यही प्रक्रिया Relay 3 र Relay 4 मा दोहोर्‍याउनुहोस्।
+4. User फोनहरू आफू नजिकको Relay को Wi-Fi/Hotspot मा जोडेर Wolketoke बाट त्यस Relay मा connect गर्नुहोस्।
+
+BLUETOOTH UPSTREAM + WIFI DOWNSTREAM
+1. छेउछाउका प्रत्येक upstream/downstream Relay जोडीलाई Android Bluetooth Settings बाट pair गर्नुहोस्।
+2. अघिल्लो node (Host वा Relay) मा START OFFLINE HOST चालु हुनुपर्छ; यसले Bluetooth Classic listener खोल्छ।
+3. पछिल्लो Relay मा अघिल्लो node को Bluetooth MAC राखेर START BLUETOOTH RELAY थिच्नुहोस्। यस Relay को Wi-Fi listener downstream फोनका लागि चलिरहन्छ।
+4. Relay 1 देखि Relay 4 सम्म यही क्रम दोहोर्‍याउनुहोस्। Android 12+ मा Nearby/Bluetooth Connect permission दिनुहोस्। Bluetooth Classic/RFCOMM support आवश्यक छ।
+
+IMPORTANT
+- हरेक relay link लाई chain/tree बनाउनुहोस्; एउटै दुई node बीच दोहोरो path नबनाउनुहोस्, नत्र duplicate/feedback audio हुन सक्छ।
+- Wi-Fi upstream र downstream hotspot एकै फोनमा एकसाथ चल्ने/नचल्ने कुरा फोनको model र Android vendor मा निर्भर हुन्छ। यस्तो फोनमा Bluetooth upstream + Wi-Fi hotspot downstream प्रयोग गर्नुहोस्।
+- Bluetooth Classic को range सीमित हुन्छ। बीचका relay फोनहरू नजिक राख्नुहोस्।
+- प्रति node सीमा १३ downstream peers हो (host/relay सहित node मा १४ device देखिन सक्छ)। यो global central counter होइन।
+- ५० user-device लक्ष्यलाई वास्तविक ५० फोनमा load test गर्न बाँकी छ। Android SDK/Gradle build र device test यस वातावरणमा गरिएको छैन; GitHub Actions बाट APK build गरी पहिले २, ३, ५, १० र त्यसपछि क्रमशः बढी फोनमा परीक्षण गर्नुहोस्।
+- यो source beta हो; emergency/safety-critical communication का लागि प्रयोग नगर्नुहोस्।
