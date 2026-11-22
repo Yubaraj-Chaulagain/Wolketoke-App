@@ -1,6 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.CAMERA"/>
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
@@ -17,9 +18,11 @@
     <uses-feature android:name="android.hardware.wifi" android:required="false"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="32"/>
     <uses-feature android:name="android.hardware.microphone" android:required="true"/>
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <application android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:label="Wolketoke Walkie-Talkie" android:usesCleartextTraffic="true" android:allowBackup="false">
         <service android:name=".WalkieBackgroundService" android:exported="false" android:foregroundServiceType="microphone" />
         <service android:name=".MusicCaptureService" android:exported="false" android:foregroundServiceType="mediaProjection" />
+        <activity android:name=".VideoCallActivity" android:screenOrientation="landscape" android:exported="false" />
         <activity android:name=".OnlineActivity" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".MainActivity" android:screenOrientation="portrait" android:exported="true">
             <intent-filter>
