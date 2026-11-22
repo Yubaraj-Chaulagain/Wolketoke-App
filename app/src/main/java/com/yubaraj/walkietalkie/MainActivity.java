@@ -214,7 +214,12 @@ public class MainActivity extends Activity {
         scroll.addView(root);setContentView(scroll);
         hostBtn.setOnClickListener(v->startHost());
         relayBtn.setOnClickListener(v->{String ip=relayHostInput.getText().toString().trim();if(ip.isEmpty()){setStatus("Relay सुरु गर्न Main Host को IP लेख्नुहोस्।");return;}startRelay(ip);});
-        bluetoothRelayBtn.setOnClickListener(v->{String mac=relayBluetoothInput.getText().toString().trim();if(mac.isEmpty()){setStatus("पहिले Main Host को Bluetooth MAC address राख्नुहोस् र दुवै फोन Pair गर्नुहोस्।");return;}startBluetoothRelay(mac);});
+        // Bluetooth relay controls are not currently rendered in this UI.
+        // Never dereference the optional controls during startup; otherwise the app
+        // crashes immediately after the splash screen with a NullPointerException.
+        if (bluetoothRelayBtn != null && relayBluetoothInput != null) {
+            bluetoothRelayBtn.setOnClickListener(v->{String mac=relayBluetoothInput.getText().toString().trim();if(mac.isEmpty()){setStatus("पहिले Main Host को Bluetooth MAC address राख्नुहोस् र दुवै फोन Pair गर्नुहोस्।");return;}startBluetoothRelay(mac);});
+        }
         rescanBtn.setOnClickListener(v->{renderLists();startBluetoothScan();setStatus("Searching again…");});
         stopBtn.setOnClickListener(v->disconnectAll());
         nameBtn.setOnClickListener(v->{String n=nameInput.getText().toString().trim();if(n.isEmpty()){setStatus("Please enter a name.");return;}deviceName=n;getPreferences(0).edit().putString("deviceName",n).apply();setStatus("Name saved: "+deviceName);if(hosting)setStatus("Name saved. Restart HOST so others see the updated name.");});
