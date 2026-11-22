@@ -21,37 +21,46 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 2. Java 17
+      # 2. Setup JDK 17
       - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      # 3. Android SDK
-      # Do NOT specify cmdline-tools-version here.
+      # 3. Setup Android SDK
+      # IMPORTANT:
+      # Do NOT use setup-android@v3
+      # Do NOT request the deprecated "tools" package.
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
 
       # 4. Accept Android SDK Licenses
       - name: Accept Android SDK Licenses
         run: |
-          yes | sdkmanager --licenses || true
+          yes | sdkmanager --licenses > /dev/null || true
 
       # 5. Install Required Android SDK Packages
       - name: Install Android SDK Packages
         run: |
-          sdkmanager \
-            "platform-tools" \
+          sdkmanager --install \
             "platforms;android-35" \
             "build-tools;35.0.0"
 
-      # 6. Check Android SDK
-      - name: Check Android SDK
+      # 6. Verify Android SDK
+      - name: Verify Android SDK
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          sdkmanager --list | head -n 50
+
+          echo "Checking sdkmanager..."
+          command -v sdkmanager
+
+          echo "Checking installed packages..."
+          sdkmanager --list_installed | grep -E \
+            "platform-tools|platforms;android-35|build-tools;35.0.0" || true
 
       # 7. Setup Gradle
       - name: Setup Gradle
@@ -62,18 +71,22 @@ jobs:
       # 8. Validate Project Files
       - name: Validate Project Files
         run: |
+          echo "Checking project..."
+
           test -d app
           test -f settings.gradle
           test -f build.gradle
           test -f gradle.properties
+          test -f app/build.gradle
 
-          echo "Project files verified successfully."
+          echo "Project files verified."
 
       # 9. Show App Version
       - name: Show App Version
         run: |
-          echo "Checking app/build.gradle..."
+          echo "===== APP VERSION ====="
           grep -n "versionCode\|versionName" app/build.gradle || true
+          echo "======================="
 
       # 10. Clean Project
       - name: Clean Project
@@ -85,37 +98,43 @@ jobs:
         run: |
           gradle assembleRelease --stacktrace
 
-      # 12. Verify RELEASE APK
-      - name: Verify APK
+      # 12. Find Release APK
+      - name: Verify Release APK
         run: |
           echo "Searching for Release APK..."
 
           APK=$(find app/build/outputs/apk/release \
-            -name "*.apk" \
             -type f \
+            -name "*.apk" \
             | head -n 1)
 
           if [ -z "$APK" ]; then
             echo "ERROR: RELEASE APK NOT FOUND"
+            echo ""
             echo "Available APK files:"
-            find app/build/outputs -name "*.apk" -type f || true
+            find app/build/outputs \
+              -type f \
+              -name "*.apk" || true
             exit 1
           fi
 
-          echo "Release APK found:"
+          echo "APK FOUND:"
           echo "$APK"
 
           mkdir -p release
 
           cp "$APK" release/Wolketoke-Relay.apk
 
+          echo ""
           echo "APK copied successfully."
 
-      # 13. Show APK Information
+      # 13. APK Information
       - name: APK Information
         run: |
+          echo "===== APK INFORMATION ====="
           ls -lh release/Wolketoke-Relay.apk
           file release/Wolketoke-Relay.apk
+          echo "==========================="
 
       # 14. Upload APK Artifact
       - name: Upload APK Artifact
@@ -123,6 +142,7 @@ jobs:
         with:
           name: Wolketoke-50-Device-Relay-APK
           path: release/Wolketoke-Relay.apk
+          if-no-files-found: error
           retention-days: 30
 
       # 15. Create GitHub Release
@@ -131,10 +151,12 @@ jobs:
         with:
           tag_name: apk-build-${{ github.run_number }}
           name: Wolketoke Walkie-Talkie APK Release ${{ github.run_number }}
+
           body: |
             Wolketoke Hybrid Multi-Hop Android APK
 
             Build Number: ${{ github.run_number }}
+
             Version: 1.9
             Version Code: 9
 
@@ -142,11 +164,11 @@ jobs:
             Gradle: 8.7
             Android SDK: 35
 
-            APK: Wolketoke-Relay.apk
+            Build Type: RELEASE
 
-            This is a RELEASE APK.
+            APK:
+            Wolketoke-Relay.apk
 
-            Download and install on your Android device.
           files: release/Wolketoke-Relay.apk
           fail_on_unmatched_files: true
           make_latest: true
@@ -158,6 +180,7 @@ jobs:
           echo "## APK BUILD SUCCESSFUL" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Wolketoke Release APK created successfully." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "Build Number: ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
           echo "Version: 1.9" >> $GITHUB_STEP_SUMMARY
           echo "Version Code: 9" >> $GITHUB_STEP_SUMMARY
