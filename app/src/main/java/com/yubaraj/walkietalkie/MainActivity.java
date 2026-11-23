@@ -532,13 +532,17 @@ public class MainActivity extends Activity {
                     for(Client other:clients)other.send(3,new byte[]{1});for(BluetoothClient other:bluetoothClients)other.send(3,new byte[]{1});
                     if(relayMode)sendUpstream(3,new byte[]{1});
                 }
+                else if(type==4){
+                    // A connected phone is requesting a video call. Notify the host UI.
+                    runOnUiThread(() -> showIncomingVideoInvite(c));
+                }
             }
         }catch(Exception ignored){}finally{clients.remove(c);try{c.socket.close();}catch(Exception ignored){}if(hosting)setStatus("Node connected: "+(clients.size()+1)+"/14 devices (host/relay included)");}
     }
     void readServer(Socket s){
         try(DataInputStream in=new DataInputStream(new BufferedInputStream(s.getInputStream()))){
             while(connected&&!s.isClosed()){
-                int type=in.readUnsignedByte();int len=in.readInt();if(len<0||len>8192)break;byte[] data=new byte[len];in.readFully(data);if(type==1){play(data);if(relayMode){for(Client downstream:clients)downstream.send(type,data);for(BluetoothClient downstream:bluetoothClients)downstream.send(type,data);}} else if(type==2){startSchoolBellLocal();if(relayMode){for(Client downstream:clients)downstream.send(type,data);for(BluetoothClient downstream:bluetoothClients)downstream.send(type,data);}} else if(type==3){stopSchoolBellLocal();if(relayMode){for(Client downstream:clients)downstream.send(type,data);for(BluetoothClient downstream:bluetoothClients)downstream.send(type,data);}}
+                int type=in.readUnsignedByte();int len=in.readInt();if(len<0||len>8192)break;byte[] data=new byte[len];in.readFully(data);if(type==1){play(data);if(relayMode){for(Client downstream:clients)downstream.send(type,data);for(BluetoothClient downstream:bluetoothClients)downstream.send(type,data);}} else if(type==2){startSchoolBellLocal();if(relayMode){for(Client downstream:clients)downstream.send(type,data);for(BluetoothClient downstream:bluetoothClients)downstream.send(type,data);}} else if(type==3){stopSchoolBellLocal();if(relayMode){for(Client downstream:clients)downstream.send(type,data);for(BluetoothClient downstream:bluetoothClients)downstream.send(type,data);}} else if(type==4){ runOnUiThread(() -> showIncomingVideoInvite(null)); } else if(type==5){ runOnUiThread(() -> launchVideoCall(false,connectedHostIp)); }
             }
         }catch(Exception ignored){}finally{
             if(relayMode){setStatus("Relay upstream disconnected. Closing relay links.");disconnectAll();}
@@ -610,9 +614,40 @@ public class MainActivity extends Activity {
             setStatus("Video call का लागि Camera permission दिनुहोस्, त्यसपछि फेरि VIDEO CALL थिच्नुहोस्।");
             return;
         }
-        Intent i=new Intent(this, VideoCallActivity.class);
-        i.putExtra("host",hosting);
-        i.putExtra("hostIp",hosting ? getLocalIp() : connectedHostIp);
+        if(hosting){
+            // Host opens the video listener first, then sends an incoming-call invitation.
+            for(Client c:clients)c.send(4,new byte[]{1});
+            for(BluetoothClient c:bluetoothClients)c.send(4,new byte[]{1});
+            launchVideoCall(true, getLocalIp());
+        } else {
+            // A client asks the host to initiate a call; host accepts and opens its video listener.
+            if(clientOut!=null){try{synchronized(writeLock){clientOut.writeByte(4);clientOut.writeInt(1);clientOut.writeByte(1);clientOut.flush();}}catch(Exception e){setStatus("Video call request failed.");return;}}
+            setStatus("Video Call request sent to host. Please wait for acceptance.");
+        }
+    }
+
+    void showIncomingVideoInvite(Client source){
+        if(isFinishing())return;
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("📹 Incoming Video Call")
+            .setMessage("Another Wolketoke phone wants to start a video call. Accept?")
+            .setPositiveButton("ACCEPT", (d,w) -> {
+                if(checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED){
+                    requestPermissions(new String[]{Manifest.permission.CAMERA},701); return;
+                }
+                if(hosting) {
+                    if(source!=null) source.send(5,new byte[]{1});
+                    launchVideoCall(true,getLocalIp());
+                } else launchVideoCall(false,connectedHostIp);
+            })
+            .setNegativeButton("REJECT", (d,w) -> setStatus("Video call rejected."))
+            .show();
+    }
+
+    void launchVideoCall(boolean isHost,String ip){
+        Intent i=new Intent(this,VideoCallActivity.class);
+        i.putExtra("host",isHost);
+        i.putExtra("hostIp",ip==null?"":ip);
         startActivity(i);
     }
 

@@ -43,6 +43,7 @@ public class VideoCallActivity extends Activity {
     DataInputStream in;
     DataOutputStream out;
     final Object outLock = new Object();
+    volatile byte[] codecConfig;
     String hostIp = "";
     boolean startedAudioHere = false;
     String cameraId;
@@ -211,7 +212,8 @@ public class VideoCallActivity extends Activity {
             socket.setTcpNoDelay(true);
             in = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
             out = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
-            setStatus("Video call connected.");
+            setStatus("Video call connected. Sending/receiving video…");
+            sendCachedCodecConfig();
             startDecoderReader();
         } catch (Exception e) {
             if (running) setStatus("Video host error: " + e.getMessage());
@@ -221,12 +223,24 @@ public class VideoCallActivity extends Activity {
     void connectVideoClient() {
         try {
             if (hostIp.isEmpty()) throw new IOException("Host IP not found");
-            socket = new Socket();
-            socket.connect(new InetSocketAddress(hostIp, VIDEO_PORT), 7000);
+            IOException last = null;
+            for (int attempt=0; attempt<15 && running; attempt++) {
+                try {
+                    socket = new Socket();
+                    socket.connect(new InetSocketAddress(hostIp, VIDEO_PORT), 2500);
+                    last = null; break;
+                } catch (IOException e) {
+                    last = e;
+                    try { if(socket!=null) socket.close(); } catch(Exception ignored) {}
+                    Thread.sleep(700);
+                }
+            }
+            if (last != null || socket == null || !socket.isConnected()) throw new IOException("Host video listener did not start");
             socket.setTcpNoDelay(true);
             in = new DataInputStream(new BufferedInputStream(socket.getInputStream()));
             out = new DataOutputStream(new BufferedOutputStream(socket.getOutputStream()));
-            setStatus("Video call connected.");
+            setStatus("Video call connected. Sending/receiving video…");
+            sendCachedCodecConfig();
             startDecoderReader();
         } catch (Exception e) {
             if (running) setStatus("Video connect failed: " + (e.getMessage() == null ? "check same Wi-Fi/Hotspot" : e.getMessage()));
@@ -240,12 +254,17 @@ public class VideoCallActivity extends Activity {
                 int idx = encoder.dequeueOutputBuffer(info, 10000);
                 if (idx >= 0) {
                     ByteBuffer bb = encoder.getOutputBuffer(idx);
-                    if (bb != null && info.size > 0 && out != null) {
+                    if (bb != null && info.size > 0) {
                         byte[] data = new byte[info.size];
                         bb.position(info.offset);
                         bb.limit(info.offset + info.size);
                         bb.get(data);
-                        sendVideoPacket(data, info.flags);
+                        if ((info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                            codecConfig = data;
+                            sendVideoPacket(data, info.flags);
+                        } else if (out != null) {
+                            sendVideoPacket(data, info.flags);
+                        }
                     }
                     encoder.releaseOutputBuffer(idx, false);
                 }
@@ -253,6 +272,11 @@ public class VideoCallActivity extends Activity {
         } catch (Exception e) {
             if (running) setStatus("Video sending stopped.");
         }
+    }
+
+    void sendCachedCodecConfig() {
+        byte[] cfg = codecConfig;
+        if (cfg != null && cfg.length > 0) sendVideoPacket(cfg, MediaCodec.BUFFER_FLAG_CODEC_CONFIG);
     }
 
     void sendVideoPacket(byte[] data, int flags) {
@@ -315,6 +339,7 @@ public class VideoCallActivity extends Activity {
 
     void switchCamera() {
         frontCamera = !frontCamera;
+        cameraId = null;
         closeCamera();
         new Handler(Looper.getMainLooper()).postDelayed(this::openCamera, 250);
     }
