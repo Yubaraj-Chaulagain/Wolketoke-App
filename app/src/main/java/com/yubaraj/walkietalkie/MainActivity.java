@@ -162,7 +162,11 @@ public class MainActivity extends Activity {
     }
 
     void requestNeededPermissions(){
+        // Ask for camera permission during app startup, but never block the
+        // Walkie-Talkie UI if the user denies it. Video calling checks the
+        // permission again before opening the camera.
         ArrayList<String> p=new ArrayList<>();
+        if(Build.VERSION.SDK_INT>=23 && checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED)p.add(Manifest.permission.CAMERA);
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)p.add(Manifest.permission.RECORD_AUDIO);
         if(Build.VERSION.SDK_INT>=31){
             if(checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN)!=PackageManager.PERMISSION_GRANTED)p.add(Manifest.permission.BLUETOOTH_SCAN);
