@@ -48,6 +48,11 @@ public class VideoCallActivity extends Activity {
     boolean startedAudioHere = false;
     String cameraId;
     boolean frontCamera = false;
+    // Prevent duplicate Camera2 open requests when surfaceCreated and the
+    // immediate surface-validity check happen close together.
+    boolean cameraOpening = false;
+    volatile boolean remoteSurfaceReady = false;
+    volatile byte[] pendingRemoteCodecConfig;
 
     @Override public void onCreate(Bundle b) {
         super.onCreate(b);
@@ -58,6 +63,20 @@ public class VideoCallActivity extends Activity {
         getWindow().setStatusBarColor(0xFF050E1A);
         getWindow().setNavigationBarColor(0xFF050E1A);
         buildUi();
+        remoteHolder.addCallback(new SurfaceHolder.Callback() {
+            @Override public void surfaceCreated(SurfaceHolder h) {
+                remoteSurfaceReady = h.getSurface() != null && h.getSurface().isValid();
+                byte[] cfg = pendingRemoteCodecConfig;
+                if (remoteSurfaceReady && cfg != null) decode(cfg, MediaCodec.BUFFER_FLAG_CODEC_CONFIG);
+            }
+            @Override public void surfaceChanged(SurfaceHolder h, int f, int w, int he) {
+                remoteSurfaceReady = h.getSurface() != null && h.getSurface().isValid();
+            }
+            @Override public void surfaceDestroyed(SurfaceHolder h) {
+                remoteSurfaceReady = false;
+                releaseDecoder();
+            }
+        });
 
         if (MainActivity.instance != null && !MainActivity.instance.handsFree) {
             MainActivity.instance.toggleHandsFree();
@@ -144,7 +163,9 @@ public class VideoCallActivity extends Activity {
     }
 
     void openCamera() {
-        if (!running || camera != null) return;
+        if (!running || camera != null || cameraOpening) return;
+        if (localHolder == null || localHolder.getSurface() == null || !localHolder.getSurface().isValid()) return;
+        cameraOpening = true;
         try {
             CameraManager cm = (CameraManager)getSystemService(Context.CAMERA_SERVICE);
             for (String id : cm.getCameraIdList()) {
@@ -155,17 +176,42 @@ public class VideoCallActivity extends Activity {
                     cameraId = id; break;
                 }
             }
-            if (cameraId == null) cameraId = cm.getCameraIdList()[0];
-            if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) return;
+            if (cameraId == null) {
+                String[] ids = cm.getCameraIdList();
+                if (ids.length == 0) throw new IllegalStateException("No camera is available on this device");
+                cameraId = ids[0];
+            }
+            if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                cameraOpening = false;
+                return;
+            }
 
             prepareEncoder();
             cm.openCamera(cameraId, new CameraDevice.StateCallback() {
-                public void onOpened(CameraDevice c) { camera = c; createCameraSession(); }
-                public void onDisconnected(CameraDevice c) { c.close(); camera = null; }
-                public void onError(CameraDevice c, int e) { c.close(); camera = null; setStatus("Camera error: " + e); }
-            }, null);
+                public void onOpened(CameraDevice c) {
+                    cameraOpening = false;
+                    if (!running) { c.close(); return; }
+                    camera = c;
+                    createCameraSession();
+                }
+                public void onDisconnected(CameraDevice c) {
+                    cameraOpening = false;
+                    c.close();
+                    if (camera == c) camera = null;
+                    setStatus("Camera disconnected by Android.");
+                }
+                public void onError(CameraDevice c, int e) {
+                    cameraOpening = false;
+                    c.close();
+                    if (camera == c) camera = null;
+                    setStatus("Camera error: " + e);
+                    releaseEncoder();
+                }
+            }, new Handler(Looper.getMainLooper()));
         } catch (Exception e) {
-            setStatus("Camera start failed: " + e.getMessage());
+            cameraOpening = false;
+            releaseEncoder();
+            setStatus("Camera start failed: " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
         }
     }
 
@@ -187,12 +233,16 @@ public class VideoCallActivity extends Activity {
         try {
             List<Surface> surfaces = new ArrayList<>();
             surfaces.add(encoderSurface);
-            if (localHolder.getSurface() != null && localHolder.getSurface().isValid()) surfaces.add(localHolder.getSurface());
+            if (localHolder.getSurface() != null && localHolder.getSurface().isValid()) {
+                localHolder.getSurface().setFrameRate(15f, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT);
+                surfaces.add(localHolder.getSurface());
+            }
             CaptureRequest.Builder b = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
             b.addTarget(encoderSurface);
             if (localHolder.getSurface() != null && localHolder.getSurface().isValid()) b.addTarget(localHolder.getSurface());
             camera.createCaptureSession(surfaces, new CameraCaptureSession.StateCallback() {
                 public void onConfigured(CameraCaptureSession s) {
+                    if (!running || camera == null) { s.close(); return; }
                     cameraSession = s;
                     try {
                         b.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO);
@@ -200,7 +250,11 @@ public class VideoCallActivity extends Activity {
                         setStatus(host ? "Local video host ready. Waiting for another phone…" : "Local video connected.");
                     } catch (Exception e) { setStatus("Camera session failed."); }
                 }
-                public void onConfigureFailed(CameraCaptureSession s) { setStatus("Camera session failed."); }
+                public void onConfigureFailed(CameraCaptureSession s) {
+                    s.close();
+                    setStatus("This phone cannot start preview and video encoder together. Try another camera mode/device.");
+                    releaseEncoder();
+                }
             }, null);
         } catch (Exception e) { setStatus("Video camera failed: " + e.getMessage()); }
     }
@@ -312,6 +366,11 @@ public class VideoCallActivity extends Activity {
 
     void decode(byte[] data, int flags) {
         try {
+            if (!remoteSurfaceReady || remoteHolder.getSurface() == null || !remoteHolder.getSurface().isValid()) {
+                if ((flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) pendingRemoteCodecConfig = data.clone();
+                return;
+            }
+            if ((flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) pendingRemoteCodecConfig = data.clone();
             if (decoder == null) {
                 decoder = MediaCodec.createDecoderByType("video/avc");
                 MediaFormat f = MediaFormat.createVideoFormat("video/avc", 640, 480);
@@ -348,23 +407,41 @@ public class VideoCallActivity extends Activity {
         runOnUiThread(() -> { if (status != null) status.setText(s); });
     }
 
+    void releaseEncoder() {
+        MediaCodec old = encoder;
+        encoder = null;
+        if (old != null) {
+            try { old.stop(); } catch (Exception ignored) {}
+            try { old.release(); } catch (Exception ignored) {}
+        }
+        Surface oldSurface = encoderSurface;
+        encoderSurface = null;
+        if (oldSurface != null) { try { oldSurface.release(); } catch (Exception ignored) {} }
+    }
+
+    void releaseDecoder() {
+        MediaCodec old = decoder;
+        decoder = null;
+        if (old != null) {
+            try { old.stop(); } catch (Exception ignored) {}
+            try { old.release(); } catch (Exception ignored) {}
+        }
+    }
+
     void closeCamera() {
+        try { if (cameraSession != null) cameraSession.stopRepeating(); } catch (Exception ignored) {}
         try { if (cameraSession != null) cameraSession.close(); } catch (Exception ignored) {}
         cameraSession = null;
-        try { if (camera != null) camera.close(); } catch (Exception ignored) {}
+        CameraDevice oldCamera = camera;
         camera = null;
-        try { if (encoder != null) encoder.stop(); } catch (Exception ignored) {}
-        try { if (encoder != null) encoder.release(); } catch (Exception ignored) {}
-        encoder = null;
-        encoderSurface = null;
+        try { if (oldCamera != null) oldCamera.close(); } catch (Exception ignored) {}
+        releaseEncoder();
     }
 
     @Override protected void onDestroy() {
         running = false;
         closeCamera();
-        try { if (decoder != null) decoder.stop(); } catch (Exception ignored) {}
-        try { if (decoder != null) decoder.release(); } catch (Exception ignored) {}
-        decoder = null;
+        releaseDecoder();
         try { if (socket != null) socket.close(); } catch (Exception ignored) {}
         try { if (serverSocket != null) serverSocket.close(); } catch (Exception ignored) {}
         if (startedAudioHere && MainActivity.instance != null && MainActivity.instance.handsFree) {
